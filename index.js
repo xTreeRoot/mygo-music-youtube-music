@@ -1,10 +1,6 @@
-// YouTube Music, for personal use. The catalog comes from the API its website
-// calls. A track's audio is found as YouTube's app for the Vision Pro asks for
-// it, which is given addresses that play as they are, and ffmpeg turns it into
-// the MP3 the app can play, as neither AAC nor Opus is something it decodes.
-// Should YouTube stop answering that app, yt-dlp finds the audio instead, if
-// it's installed. Your library takes your own session, which signing in on
-// Google's page in a window of the app gives, as its cookies.
+// YouTube Music for MB iOS, based on egoist/mygo-music-youtube-music.
+// Catalog and account requests retain the upstream contract. Audio uses the
+// existing VisionOS response's AAC variants, decoded natively by AVFoundation.
 
 const site = "https://music.youtube.com";
 const webUA =
@@ -762,255 +758,58 @@ async function youtubeLyrics(next) {
   };
 }
 
-// Playing.
-
-const installed = {};
-
-// GUI apps don't get a shell's PATH, so where Homebrew installs programs is
-// tried too. Those are the places the process permission in plugin.json names,
-// so a new one goes there as well. Starting one is the only way a plugin can
-// tell it's there.
-async function program(name, versionFlag) {
-  if (installed[name]) return installed[name];
-  const places = [name, `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`];
-  for (const path of places) {
-    try {
-      const proc = host.spawn(path, [versionFlag]);
-      proc.closeStdin();
-      while ((await proc.readLine()) !== null) {}
-      if ((await proc.wait()) === 0) {
-        installed[name] = path;
-        return path;
-      }
-    } catch (e) {
-      if (/allowed/.test(e.message)) {
-        throw fail("setup", t("Allow YouTube Music to start programs in its settings"));
-      }
-    }
-  }
-  return null;
-}
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Where a track's audio is, and how loud it is. Its address lasts for hours.
-const located = new Map();
-const locatedFor = 60 * 60 * 1000;
-
-async function locate(id) {
-  const known = located.get(id);
-  if (known && Date.now() - known.at < locatedFor) return known;
-  let found;
-  try {
-    found = await direct(id);
-  } catch (e) {
-    // What YouTube won't play, yt-dlp can't either.
-    if (e.code === "unavailable") throw e;
-    console.warn(`finding ${id}'s audio: ${e.message}`);
-    visitor = "";
-    found = await throughYtdlp(id, e);
-  }
-  found.at = Date.now();
-  located.set(id, found);
-  return found;
-}
-
-// A visit gets an ID before it's given any audio, or it's asked if it's a bot.
+// MB iOS plays AAC/MP4 directly with AVFoundation; no desktop processes are needed.
 let visitor = "";
+const located = new Map();
+const pendingAudio = new Map();
 
 async function visitorData() {
   if (visitor) return visitor;
-  const r = await call("visitor_id", {}, { ...remix, anonymous: true });
-  visitor = r.responseContext?.visitorData || "";
+  const result = await call("visitor_id", {}, { ...remix, anonymous: true });
+  visitor = result.responseContext?.visitorData || "";
   if (!visitor) throw new Error(t("YouTube gave this visit no ID"));
   return visitor;
 }
 
-// The audio of the highest bit rate, as yt-dlp picks it: in the track's own
-// language, and as it was mixed, rather than the copy with its range
-// compressed, which YouTube lists beside it.
-async function direct(id) {
-  const r = await call("player", { videoId: id, contentCheckOk: true, racyCheckOk: true }, visionOS(await visitorData()));
-  const status = r.playabilityStatus || {};
-  if (status.status !== "OK") {
-    const why = status.reason || `YouTube says ${status.status || "nothing"} of this`;
-    throw status.status === "UNPLAYABLE" || status.status === "ERROR" ? fail("unavailable", why) : new Error(why);
-  }
-  let best = null;
-  for (const f of r.streamingData?.adaptiveFormats || []) {
-    if (!f.mimeType?.startsWith("audio/") || !f.url || f.isDrc) continue;
-    if (f.audioTrack && !f.audioTrack.audioIsDefault) continue;
-    if (!best || f.bitrate > best.bitrate) best = f;
-  }
-  if (!best) throw new Error(t("YouTube listed no audio to play as it is"));
-  return { url: best.url, http_headers: { "User-Agent": webUA }, gain: gainOf(r.playerConfig?.audioConfig), direct: true };
-}
-
-// The app's gain is ReplayGain's, which brings a track to -18 LUFS, and YouTube
-// says how loud a track is.
-function gainOf(audio) {
-  const lkfs = audio?.trackAbsoluteLoudnessLkfs ?? audio?.perceptualLoudnessDb;
-  if (typeof lkfs !== "number" || !lkfs) return undefined;
-  return Math.round((-18 - lkfs) * 100) / 100;
-}
-
-// The cookie goes to yt-dlp on its standard input, as anyone on this machine can
-// read the arguments of a program.
-function ytdlpConfig() {
-  const c = cookie();
-  return c ? `--add-headers "Cookie:${c.replace(/[\\"]/g, "\\$&")}"\n` : "";
-}
-
-const ytdlpTimeout = 25000;
-
-// yt-dlp finds the audio as YouTube's website does, which takes it a few
-// seconds, and a JavaScript runtime to work out YouTube's challenges. Without
-// it, what went wrong without it stands.
-async function throughYtdlp(id, why) {
-  const ytdlp = await program("yt-dlp", "--version");
-  if (!ytdlp) throw why;
-  const args = [
-    "--config-locations", "-",
-    "--no-warnings", "--no-playlist", "--no-progress",
-    ...whatYtdlpAsks(),
-    "--print", "%(.{url,http_headers})j",
-  ];
-  for (const runtime of ["deno", "node", "bun"]) {
-    const path = await program(runtime, "--version");
-    if (path) {
-      args.push("--js-runtimes", `${runtime}:${path}`);
-      break;
-    }
-  }
-  args.push(`https://www.youtube.com/watch?v=${id}`);
-
-  const proc = host.spawn(ytdlp, args);
-  proc.write(ytdlpConfig());
-  proc.closeStdin();
-  const timer = setTimeout(() => proc.kill(), ytdlpTimeout);
-  const lines = [];
-  for (let line; (line = await proc.readLine()) !== null; ) lines.push(line);
-  const code = await proc.wait();
-  clearTimeout(timer);
-  if (code !== 0 || !lines.length) throw ytdlpFailure(proc.errorOutput());
-  return { ...JSON.parse(lines[lines.length - 1]), direct: false };
-}
-
-// Which of YouTube's apps yt-dlp asks as, and for what. Signed out, its own
-// choice works, and the audio alone, as one file. With a session it asks as the
-// embedded player, whose addresses YouTube now turns down with no token from
-// its JavaScript, which yt-dlp can't make. Safari's are good, but only as HLS,
-// with video: at 360p, its audio is the AAC YouTube has on its own.
-function whatYtdlpAsks() {
-  if (!cookie()) {
-    return ["--extractor-args", "youtube:skip=hls,dash", "--format", "bestaudio[protocol^=http]/bestaudio"];
-  }
-  return [
-    "--extractor-args", "youtube:player_client=web_safari",
-    "--format", "bestaudio[protocol^=m3u8]/93/94/92/95/91",
-  ];
-}
-
-function ytdlpFailure(output) {
-  const said = output.split("\n").reverse().find((l) => l.startsWith("ERROR:")) || output.trim() || "yt-dlp stopped";
-  const why = said.replace(/^ERROR:\s*(\[[^\]]*\]\s*)?(\S+:\s*)?/, "");
-  if (/not a bot|sign in|cookies/i.test(why)) {
-    return fail("signIn", cookie() ? t("YouTube turned down your session: sign in again") : t("YouTube asks you to sign in to play this"));
-  }
-  if (/unavailable|private|removed|not available|premium/i.test(why)) return fail("unavailable", why);
-  return new Error(why);
-}
-
-// YouTube's own player asks for its audio a piece at a time, and serves one
-// request for all of it slowly. An older ffmpeg can't ask that way.
-let ranged = null;
-
-async function asksInPieces(ffmpeg) {
-  if (ranged !== null) return ranged;
-  const proc = host.spawn(ffmpeg, ["-hide_banner", "-h", "protocol=http"]);
-  proc.closeStdin();
-  let found = false;
-  for (let line; (line = await proc.readLine()) !== null; ) found ||= line.includes("-request_size");
-  await proc.wait();
-  return (ranged = found);
-}
-
-// ffmpeg serves the MP3 itself, to the one request that comes for it, and so
-// lets the track start before all of it is there. No more than a few wait at a
-// time, for what was skipped before it was ever asked for.
-const serving = [];
-const servingAtMost = 3;
-const servedWithin = 10 * 60 * 1000;
-
-function stopWaiting() {
-  while (serving.length >= servingAtMost) serving.shift().kill();
-}
-
-async function serve(source, bitRate) {
-  const ffmpeg = await program("ffmpeg", "-version");
-  if (!ffmpeg) {
-    throw fail("setup", t("YouTube Music plays through ffmpeg: install it with Homebrew, or so that it's on the PATH"));
-  }
-  const pieces = await asksInPieces(ffmpeg);
-  stopWaiting();
-  const headers = source.http_headers || {};
-  const port = 20000 + Math.floor(Math.random() * 40000);
-  const proc = host.spawn(ffmpeg, [
-    "-nostdin", "-hide_banner", "-nostats",
-    "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
-    "-rw_timeout", "15000000",
-    ...(pieces ? ["-request_size", String(10 << 20)] : []),
-    ...(headers["User-Agent"] ? ["-user_agent", headers["User-Agent"]] : []),
-    "-i", source.url,
-    "-vn", "-c:a", "libmp3lame", "-b:a", `${bitRate}k`, "-id3v2_version", "0", "-write_xing", "0",
-    "-f", "mp3", "-listen", "1", `http://127.0.0.1:${port}/`,
-  ]);
-  proc.closeStdin();
-  let stopped = false;
-  serving.push(proc);
-  const timer = setTimeout(() => proc.kill(), servedWithin);
-  proc.wait().then(() => {
-    stopped = true;
-    clearTimeout(timer);
-    const at = serving.indexOf(proc);
-    if (at >= 0) serving.splice(at, 1);
-  });
-  // It says what it's reading right before it opens the port. Trying the port
-  // isn't a way to find out: it would take the one request ffmpeg answers.
-  const until = Date.now() + 15000;
-  while (!proc.errorOutput().includes("Input #0")) {
-    if (stopped) throw new Error(`ffmpeg stopped: ${proc.errorOutput().trim().split("\n").pop()}`);
-    if (Date.now() > until) {
-      proc.kill();
-      throw new Error(t("the audio didn't start in time"));
-    }
-    await sleep(30);
-  }
-  await sleep(100);
-  return `http://127.0.0.1:${port}/`;
-}
-
-export async function stream({ id, quality }) {
-  const kbps = quality === "standard" ? 128 : 192;
-  let source = await locate(id);
-  let url;
+function mediaURL(value) {
   try {
-    url = await serve(source, kbps);
-  } catch (e) {
-    // An address may stop working before it said it would, and YouTube now and
-    // then turns down one it just gave out: yt-dlp may find one that works.
-    located.delete(id);
-    if (!source.direct || e.code === "setup") throw e;
-    console.warn(`playing ${id} as YouTube gave it: ${e.message}`);
-    source = { ...(await throughYtdlp(id, e)), gain: source.gain, at: Date.now() };
-    url = await serve(source, kbps);
-    located.set(id, source);
-  }
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port || !url.hostname.endsWith(".googlevideo.com")) throw new Error();
+    return url.toString();
+  } catch { throw fail("unavailable", "YouTube 返回的音频地址不可用"); }
+}
+
+async function nativeAudio(id, quality) {
+  const result = await call("player", { videoId: id, contentCheckOk: true, racyCheckOk: true }, visionOS(await visitorData()));
+  const status = result.playabilityStatus || {};
+  if (status.status !== "OK") throw fail("unavailable", status.reason || "YouTube 当前未提供可播放音频");
+  const formats = (result.streamingData?.adaptiveFormats || []).filter(format =>
+    /^audio\/mp4\b/i.test(format.mimeType || "") && /mp4a/i.test(format.mimeType) && format.url && !format.isDrc &&
+    (!format.audioTrack || format.audioTrack.audioIsDefault));
+  if (!formats.length) throw fail("unavailable", "YouTube 当前未提供可直接播放的 AAC 音频");
+  formats.sort((a, b) => Number(a.bitrate || 0) - Number(b.bitrate || 0));
+  const selected = quality === "standard" ? formats[0] : formats[formats.length - 1];
+  const loudness = result.playerConfig?.audioConfig?.trackAbsoluteLoudnessLkfs ?? result.playerConfig?.audioConfig?.perceptualLoudnessDb;
   return {
-    url,
-    type: "mp3",
-    quality: kbps === 128 ? "standard" : "high",
-    bitRate: kbps * 1000,
-    gain: source.gain,
+    url: mediaURL(selected.url), type: "m4a", quality: Number(selected.bitrate || 0) >= 128000 ? "high" : "standard",
+    bitRate: Number(selected.bitrate) || undefined, size: Number(selected.contentLength) || undefined,
+    gain: typeof loudness === "number" && loudness ? Math.round((-18 - loudness) * 100) / 100 : undefined,
+    headers: { "User-Agent": visionUA },
   };
+}
+
+export async function stream({ id, quality = "high" }) {
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(String(id))) throw fail("unavailable", "无效的 YouTube 视频 ID");
+  const key = `${id}:${quality === "standard" ? "standard" : "high"}`;
+  const saved = located.get(key);
+  if (saved && Date.now() - saved.at < 30 * 60 * 1000) return saved.audio;
+  if (pendingAudio.has(key)) return pendingAudio.get(key);
+  const request = nativeAudio(id, quality).then(audio => {
+    if (located.size >= 32) located.delete(located.keys().next().value);
+    located.set(key, { audio, at: Date.now() });
+    return audio;
+  });
+  pendingAudio.set(key, request);
+  try { return await request; }
+  finally { if (pendingAudio.get(key) === request) pendingAudio.delete(key); }
 }

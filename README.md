@@ -1,43 +1,26 @@
-# YouTube Music for MyGo Music
+# YouTube Music · MB iOS 兼容版
 
-Plays YouTube Music in [MyGo Music](https://github.com/egoist/mygo-music). It isn't affiliated with or endorsed by YouTube or Google, uses YouTube's private API, and may stop working at any time.
+Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)，保留上游页面、搜索、歌单、账号与歌词实现。版本 **0.1.2**，宿主插件兼容版本至少 0.1.21。
 
-## Install
+## iOS 适配
 
-Install [ffmpeg](https://ffmpeg.org), and [yt-dlp](https://github.com/yt-dlp/yt-dlp) as a fallback. On macOS:
+原版通过 `host.spawn` 启动 ffmpeg 转 MP3，失败后使用 yt-dlp，并依赖 PATH/Homebrew 和 JavaScript runtime。这些桌面进程不能在 MB iOS 中启动。
 
-```bash
-brew install ffmpeg yt-dlp
+本版沿用上游 VISIONOS player 请求，只选择服务端提供的 AAC/MP4 音频直链，交给 AVFoundation 原生播放。移除外部进程权限与本地 HTTP 转码服务；请求无损时返回实际可用的有损音质。没有可用 AAC 或服务要求额外验证时正常报错，不启动外部程序。
+
+## 安装
+
+在 MB 插件页从 GitHub 安装 `xTreeRoot/mygo-music-youtube-music`，或导入 [Releases](https://github.com/xTreeRoot/mygo-music-youtube-music/releases) 中的 ZIP。插件 ID 仍为 `youtube-music`。
+
+需要当前设备网络能够访问 YouTube。账号登录仍使用宿主的网页登录能力；Google 是否接受内嵌网页登录由服务端决定，iOS 登录尚未验收。
+
+## 验证范围
+
+原生 AAC 选择、音质降级、并发请求共享、缓存及不可播放响应已有自动回归。MB 真实 QuickJS 宿主已在可访问 YouTube 的网络下完成取流、完整音频下载与 AVFoundation 可播放性检查；iOS 设备上的实际播放与 Google 登录仍需使用验收。
+
+```sh
+npm run check
+npm test
 ```
 
-yt-dlp needs a JavaScript runtime (Deno, Node or Bun) to solve YouTube's challenges; Homebrew includes Deno. Keep yt-dlp up to date, as YouTube changes often.
-
-Install with the deeplink:
-
-[mygo-music://install-plugin?repo=egoist/mygo-music-youtube-music](mygo-music://install-plugin?repo=egoist/mygo-music-youtube-music)
-
-Or paste the GitHub URL in Settings > Plugins:
-
-[https://github.com/egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)
-
-In Settings > Plugins, allow YouTube Music to start programs. To get your library, click **Sign In** and sign in to Google in the window that opens.
-
-It needs MyGo Music 0.1.8 or later, and only starts ffmpeg and yt-dlp: from the PATH, `/opt/homebrew/bin` or `/usr/local/bin`. If they're somewhere else, link them into one of those.
-
-## Signing in
-
-You sign in on Google's page, in a window of the app. The session is kept unencrypted in the plugin's data on this machine, and is sent to music.youtube.com, s.youtube.com for your history, and to yt-dlp when it fetches audio. Signing out forgets it. To end the session on Google's side, remove the device in your Google account's security settings.
-
-## What works
-
-- Signed out: playing, Home, charts, new releases, search, albums, artists, playlists and timed lyrics.
-- Signed in: your library, playlists, liked songs, recently played, liking songs, a personal Home, listening history and radio.
-- Not available: editing playlists, saving albums, following artists, podcasts and comments.
-
-## How it plays
-
-Tracks are fetched the way YouTube's Vision Pro app fetches them, then ffmpeg converts them to MP3 on the fly. If that fails, yt-dlp is used instead; it can take up to 15 seconds to start, and needs you signed in from a VPN or server network. The audio is lossy.
-
-## Lyrics
-
-From [Better Lyrics](https://github.com/better-lyrics/better-lyrics) when available, otherwise from YouTube Music.
+此插件不隶属于 YouTube 或 Google，依赖上游私有 API，可能随服务变动失效。歌词来源保留 [Better Lyrics](https://github.com/better-lyrics/better-lyrics)。账号会话由宿主插件私有存储保存，不包含在源码或安装包中。

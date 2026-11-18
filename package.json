@@ -1,0 +1,10 @@
+{
+  "name": "mb-youtube-music",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check index.js",
+    "test": "node --test index.test.mjs"
+  }
+}

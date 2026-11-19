@@ -1,4 +1,5 @@
 // YouTube Music for MB, based on egoist/mygo-music-youtube-music.
+import { hasOAuth, oauthHeaders, signInOAuth, endOAuth, isOAuthSignInPending } from "./oauth.js";
 
 const site = "https://music.youtube.com";
 const validVideoID = id => typeof id === "string" && /^[a-zA-Z0-9_-]{11}$/.test(id);
@@ -15,7 +16,9 @@ function fail(code, message) {
 }
 
 // The session's cookies, as a Cookie header, kept in the plugin's storage.
-const cookie = () => host.storage.get("cookie") || "";
+const cookie = () => host.storage.get("cookieActive") === false ? "" : host.storage.get("cookie") || "";
+let accountRevision = 0;
+const hasSession = () => hasOAuth() || Boolean(cookie());
 
 function cookieValue(name) {
   for (const part of cookie().split(";")) {
@@ -26,7 +29,7 @@ function cookieValue(name) {
 }
 
 function needAccount() {
-  if (!cookie()) throw fail("signIn");
+  if (!hasSession()) throw fail("signIn");
 }
 
 function sha1(text) {
@@ -59,7 +62,12 @@ function sha1(text) {
 }
 
 // What the website sends to say whose session this is, to the site at origin.
-function authHeaders(origin = site) {
+async function authHeaders(origin = site) {
+  const destination = new URL(origin);
+  if (destination.protocol !== "https:" || destination.username || destination.password ||
+      !["music.youtube.com", "www.youtube.com", "youtube.com", "s.youtube.com"].includes(destination.hostname) ||
+      (destination.port && destination.port !== "443")) throw new Error("Invalid account request destination");
+  if (hasOAuth()) return oauthHeaders();
   const sapisid = cookieValue("__Secure-3PAPISID") || cookieValue("SAPISID");
   if (!sapisid) return {};
   const now = Math.floor(Date.now() / 1000);
@@ -118,6 +126,7 @@ const visionOS = (visitor) => ({
 // call asks the service as the website, or as another of its apps. An
 // anonymous call leaves the session out.
 async function call(endpoint, body, as = remix) {
+  const generation = accountRevision;
   const res = await fetch(`${site}/youtubei/v1/${endpoint}?prettyPrint=false`, {
     method: "POST",
     headers: {
@@ -125,13 +134,13 @@ async function call(endpoint, body, as = remix) {
       "user-agent": webUA,
       origin: site,
       "x-origin": site,
-      ...(as.anonymous ? {} : authHeaders()),
+      ...(as.anonymous ? {} : await authHeaders()),
       ...as.headers,
     },
     body: JSON.stringify({ context: { client: as.client }, ...body }),
   });
   if (res.status === 401 && !as.anonymous) {
-    endSession();
+    if (generation === accountRevision && !isOAuthSignInPending()) endSession();
     throw fail("signIn", t("Your YouTube Music session has ended: sign in again"));
   }
   if (!res.ok) throw new Error(`${endpoint}: ${res.status}`);
@@ -379,7 +388,7 @@ function rowsOf(answer) {
 // Account.
 
 export async function account() {
-  if (!cookie()) return null;
+  if (!hasSession()) return null;
   const r = await call("account/account_menu", {});
   const header = findOne(r, "activeAccountHeaderRenderer");
   if (!header) return null;
@@ -393,14 +402,20 @@ const signInPage =
   "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&uilel=3&passive=true" +
   "&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F";
 
-// Google turns down signing in on a page it takes for one inside an app, so it's
-// told the page is the system's own browser.
+// Desktop hosts retain their existing web sign-in; iOS uses system OAuth below.
 const browserUA =
   host.platform === "darwin"
     ? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15"
     : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 
 export async function signIn() {
+  accountRevision += 1;
+  if (host.platform === "ios") {
+    likedSet = null;
+    const me = await signInOAuth(account);
+    host.storage.set("cookieActive", false);
+    return me;
+  }
   if (typeof host.webSignIn !== "function") throw fail("setup", t("This host cannot show the YouTube Music sign-in page"));
   let result;
   try {
@@ -413,6 +428,7 @@ export async function signIn() {
   }
   const { cookie: session } = result;
   host.storage.set("cookie", session);
+  host.storage.set("cookieActive", true);
   likedSet = null;
   const me = await account();
   if (!me) {
@@ -426,9 +442,11 @@ export function signOut() {
   endSession();
 }
 
-// What's kept of a session goes with it.
+// 退出仅停用插件私有目录中的会话，重新登录先验证后复用。
 function endSession() {
-  host.storage.remove("cookie");
+  accountRevision += 1;
+  endOAuth();
+  host.storage.set("cookieActive", false);
   likedSet = null;
 }
 
@@ -693,7 +711,7 @@ export { playlistPage as playlist };
 // The app loads this for its sidebar as it starts: no account is no playlists,
 // rather than asking someone who's only browsing to sign in.
 export async function playlists() {
-  if (!cookie()) return [];
+  if (!hasSession()) return [];
   const items = (await sectionsOf(await browseId("FEmusic_liked_playlists"))).flatMap((s) => s.playlists);
   // Liked Music has an entry of its own, and episodes for later aren't songs.
   return items.filter((p) => p.id !== "LM" && p.id !== "SE").map((p) => ({ ...p, saved: true }));
@@ -730,7 +748,7 @@ async function likedIds() {
 }
 
 export async function isLiked({ ids }) {
-  const set = cookie() ? await likedIds() : new Set();
+  const set = hasSession() ? await likedIds() : new Set();
   return Object.fromEntries(ids.map((id) => [id, set.has(id)]));
 }
 
@@ -744,7 +762,7 @@ export async function like({ id, on }) {
 }
 
 export async function recent() {
-  if (!cookie()) return [];
+  if (!hasSession()) return [];
   const sections = await sectionsOf(await browseId("FEmusic_history"));
   return sections.flatMap((s) => s.tracks).slice(0, 50);
 }
@@ -761,7 +779,7 @@ export function stations() {
 // recommendations are made from, as its own player would put it there.
 export async function played({ id }) {
   host.storage.set("lastPlayed", id);
-  if (!cookie()) return;
+  if (!hasSession()) return;
   try {
     await report(id);
   } catch (e) {
@@ -775,14 +793,15 @@ async function report(id) {
   if (!base) throw new Error(t("YouTube gave no address to report it to"));
   const url = new URL(base);
   // The session goes with it, so it goes to YouTube alone.
-  if (url.protocol !== "https:" || !/(^|\.)youtube\.com$/.test(url.hostname)) {
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") ||
+      !["music.youtube.com", "www.youtube.com", "youtube.com", "s.youtube.com"].includes(url.hostname)) {
     throw new Error(`not sending your session to ${url.hostname}`);
   }
   url.searchParams.set("ver", "2");
   url.searchParams.set("c", "WEB_REMIX");
   url.searchParams.set("cpn", playbackNonce());
   const res = await fetch(url.href, {
-    headers: { "user-agent": webUA, referer: `${site}/`, ...authHeaders(url.origin) },
+    headers: { "user-agent": webUA, referer: `${site}/`, ...await authHeaders(url.origin) },
   });
   if (!res.ok) throw new Error(`${res.status}`);
 }

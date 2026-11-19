@@ -1,6 +1,6 @@
 # YouTube Music · MB 跨平台插件
 
-Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)，保留上游页面、搜索、歌单、账号与歌词实现。版本 **0.1.5**，宿主插件兼容版本至少 0.1.26。桌面、iOS 与 Android 使用同一份包，无需桌面进程。
+Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)，保留上游页面、搜索、歌单、账号与歌词实现。版本 **0.1.6**，宿主插件兼容版本至少 0.1.26。桌面、iOS 与 Android 使用同一份包，无需桌面进程。
 
 ## 音乐与视频
 
@@ -21,6 +21,8 @@ Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-
 在 MB 插件页从 GitHub 安装 `xTreeRoot/mygo-music-youtube-music`，或导入 [Releases](https://github.com/xTreeRoot/mygo-music-youtube-music/releases) 中的 ZIP。插件 ID 仍为 `youtube-music`。
 
 需要当前设备网络能够访问 YouTube。iOS 登录改用 `host.oauthSignIn`：系统 ASWebAuthenticationSession 打开 Google 授权，宿主生成 PKCE/state 并交换授权码，不再通过内嵌 WKWebView 提取 Cookie。使用 MB 自己的公开 iOS 客户端 ID，回调 scheme 必须在 App 中注册。请求 `https://www.googleapis.com/auth/youtube` 以兼容原有喜欢、歌单和播放历史；每次账号访问仍由用户在 Google 页面授权。
+
+iOS OAuth 的账号读取使用官方 `channels.list(part=snippet,mine=true)`，避免网页 `account_menu` 拒绝原生授权。无频道或官方接口失败时明确报错，不保存未验证会话。个人库仍沿用原有 YouTube Music 浏览接口，需真机验证。
 
 当前 OAuth 应用处于外部测试模式，只允许配置的测试用户；Google 测试模式下刷新令牌通常 7 天失效，届时需重新授权。桌面保留既有网页桥，Android 缺少登录桥时仍可使用游客功能。系统浏览器使用系统网络，不受 MB 的 URLSession 域名代理开关控制。
 

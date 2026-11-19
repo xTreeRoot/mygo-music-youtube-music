@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 let sequence = 0;
-const account = { activeAccountHeaderRenderer: { accountName: { runs: [{ text: 'Fixture' }] }, channelHandle: { runs: [{ text: '@fixture' }] } } };
+const account = { items: [{ id: 'UCfixture', snippet: { title: 'Fixture', thumbnails: { default: { url: 'https://yt3.ggpht.com/fixture' } } } }] };
 const tokens = (access = 'synthetic-access') => ({ access_token: access, refresh_token: 'synthetic-refresh', expires_in: 3600, token_type: 'Bearer' });
 const session = (extra = {}) => ({ access: 'old-access', refresh: 'old-refresh', expires: Date.now() + 3600000, active: true, ...extra });
 const response = (data, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => data });
@@ -34,8 +34,10 @@ test('iOS uses system OAuth, validates with Bearer and preserves disabled sessio
     assert.deepEqual(options.scopes, ['https://www.googleapis.com/auth/youtube']);
     return tokens();
   };
-  assert.equal((await plugin.signIn()).id, '@fixture');
+  assert.equal((await plugin.signIn()).id, 'UCfixture');
   assert.equal(prompts, 1);
+  assert.equal(requests[0].url, 'https://youtube.googleapis.com/youtube/v3/channels?part=snippet&mine=true');
+  assert.equal(requests[0].method, 'GET');
   assert.equal(requests[0].headers.authorization, 'Bearer synthetic-access');
   assert.equal(requests[0].headers.cookie, undefined);
   assert.equal(storage.get('cookieActive'), false);
@@ -107,7 +109,7 @@ test('parallel account requests share a refresh and never send credentials to an
   assert.equal(refreshes, 1);
   assert.equal(storage.get('oauthSession').refresh, 'old-refresh');
   await plugin.stream({ id: 'dQw4w9WgXcQ' });
-  assert.ok(requests.filter(request => request.url.includes('/account/')).every(request => request.headers.authorization === 'Bearer renewed'));
+  assert.ok(requests.filter(request => request.url.includes('/channels?')).every(request => request.headers.authorization === 'Bearer renewed'));
   assert.ok(requests.filter(request => /\/(visitor_id|player)/.test(request.url)).every(request => !request.headers.authorization && !request.headers.cookie));
 });
 
@@ -132,4 +134,22 @@ test('temporary refresh failures preserve sessions, invalid_grant deactivates th
   await assert.rejects(request, /登录状态已改变/);
   assert.equal(storage.get('oauthSession').active, false);
   assert.equal(storage.get('oauthSession').access, original.access);
+});
+
+// Reproduce the native-token account_menu 400 without accepting an unverified identity.
+test('native OAuth never calls account_menu and rejects missing channels or official API failures', async () => {
+  const { plugin, storage, requests } = await setup();
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, ...options });
+    return url.includes('/account/account_menu') ? response({}, 400) : response(account);
+  };
+  assert.equal((await plugin.signIn()).id, 'UCfixture');
+  assert.ok(requests.every(request => request.url.startsWith('https://youtube.googleapis.com/youtube/v3/channels?')));
+  const saved = structuredClone(storage.get('oauthSession'));
+  globalThis.fetch = async () => response({ items: [] });
+  await assert.rejects(plugin.signIn(), /没有可用的 YouTube 频道/);
+  assert.deepEqual(storage.get('oauthSession'), saved);
+  globalThis.fetch = async () => response({}, 403);
+  await assert.rejects(plugin.signIn(), /HTTP 403/);
+  assert.deepEqual(storage.get('oauthSession'), saved);
 });

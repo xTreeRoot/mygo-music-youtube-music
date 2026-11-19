@@ -137,7 +137,7 @@ async function call(endpoint, body, as = remix) {
       ...(as.anonymous ? {} : await authHeaders()),
       ...as.headers,
     },
-    body: JSON.stringify({ context: { client: as.client }, ...body }),
+    body: JSON.stringify({ context: { client: as.client, user: {} }, ...body }),
   });
   if (res.status === 401 && !as.anonymous) {
     if (generation === accountRevision && !isOAuthSignInPending()) endSession();
@@ -389,6 +389,17 @@ function rowsOf(answer) {
 
 export async function account() {
   if (!hasSession()) return null;
+  if (hasOAuth()) {
+    // iOS OAuth uses the documented Data API; the website account menu can reject native client tokens.
+    const res = await fetch("https://youtube.googleapis.com/youtube/v3/channels?part=snippet&mine=true", {
+      method: "GET", headers: await oauthHeaders(),
+    });
+    if (!res.ok) throw new Error(`YouTube 账号读取失败（HTTP ${res.status}）`);
+    const channel = (await res.json()).items?.[0];
+    if (!channel?.id || !channel.snippet?.title) throw new Error("此 Google 账号没有可用的 YouTube 频道，请先在 YouTube 创建频道后重试");
+    const images = channel.snippet.thumbnails || {};
+    return { id: channel.id, name: channel.snippet.title, imageUrl: (images.high || images.medium || images.default)?.url };
+  }
   const r = await call("account/account_menu", {});
   const header = findOne(r, "activeAccountHeaderRenderer");
   if (!header) return null;

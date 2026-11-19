@@ -1,7 +1,7 @@
 {
   "id": "youtube-music",
   "name": "YouTube Music",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "minAppVersion": "0.1.26",
   "main": "index.js",
   "playback": "stream",
@@ -12,14 +12,19 @@
       "oauth2.googleapis.com",
       "s.youtube.com",
       "api.betterlyrics.org",
-      "*.googlevideo.com"
+      "*.googlevideo.com",
+      "youtube.googleapis.com"
     ]
   },
   "navigation": [
     {
       "builtin": "home"
     },
-    { "title": "音乐视频", "page": "videos", "icon": "play" },
+    {
+      "title": "音乐视频",
+      "page": "videos",
+      "icon": "play"
+    },
     {
       "title": "Charts",
       "page": "charts",

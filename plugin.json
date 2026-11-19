@@ -1,13 +1,14 @@
 {
   "id": "youtube-music",
   "name": "YouTube Music",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "minAppVersion": "0.1.21",
   "main": "index.js",
   "playback": "stream",
   "permissions": {
     "network": [
       "music.youtube.com",
+      "accounts.google.com",
       "s.youtube.com",
       "api.betterlyrics.org",
       "*.googlevideo.com"
@@ -22,6 +23,7 @@
       "page": "charts",
       "icon": "chart"
     },
+    { "title": "音乐视频", "page": "videos", "icon": "play" },
     {
       "title": "New Releases",
       "page": "new",

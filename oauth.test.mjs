@@ -153,3 +153,36 @@ test('native OAuth never calls account_menu and rejects missing channels or offi
   await assert.rejects(plugin.signIn(), /HTTP 403/);
   assert.deepEqual(storage.get('oauthSession'), saved);
 });
+
+test('OAuth discovery rejected with 400 retries the public home without clearing the account', async () => {
+  const original = session();
+  const { plugin, storage } = await setup({ oauthSession: original });
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, ...options });
+    if (options.headers.authorization) return response({ error: { code: 400 } }, 400);
+    const body = JSON.parse(options.body);
+    return response(body.continuation ? {} : { contents: { sectionListRenderer: { continuations: [{ nextContinuationData: { continuation: 'public-next' } }] } } });
+  };
+  const home = await plugin.home();
+  assert.ok(Array.isArray(home.sections));
+  assert.equal(requests.length, 3);
+  assert.equal(requests[0].headers.authorization, 'Bearer old-access');
+  for (const request of requests.slice(1)) {
+    assert.equal(request.headers.authorization, undefined);
+    assert.equal(request.headers.cookie, undefined);
+  }
+  assert.equal(JSON.parse(requests[2].body).continuation, 'public-next');
+  assert.deepEqual(storage.get('oauthSession'), original);
+});
+
+test('discovery does not hide server errors or retry account libraries as a visitor', async () => {
+  const { plugin } = await setup({ oauthSession: session() });
+  let count = 0;
+  globalThis.fetch = async () => { count++; return response({}, 503); };
+  await assert.rejects(plugin.home(), /503/);
+  assert.equal(count, 1);
+  globalThis.fetch = async () => { count++; return response({}, 400); };
+  await assert.rejects(plugin.liked({ offset: 0 }), /400/);
+  assert.equal(count, 2);
+});

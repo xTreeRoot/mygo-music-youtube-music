@@ -143,7 +143,11 @@ async function call(endpoint, body, as = remix) {
     if (generation === accountRevision && !isOAuthSignInPending()) endSession();
     throw fail("signIn", t("Your YouTube Music session has ended: sign in again"));
   }
-  if (!res.ok) throw new Error(`${endpoint}: ${res.status}`);
+  if (!res.ok) {
+    const error = new Error(`${endpoint}: ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
   return res.json();
 }
 
@@ -464,12 +468,21 @@ function endSession() {
 // Pages.
 
 async function discovery(videosOnly = false) {
-  const answer = await browseId("FEmusic_home");
+  let as = remix;
+  let answer;
+  try { answer = await call("browse", { browseId: "FEmusic_home" }, as); }
+  catch (error) {
+    // Google 原生 OAuth 能验证频道，但音乐网页可能拒绝该客户端的首页请求。
+    // 仅公开发现页回退游客内容，不清除令牌，也不把个人资料库改为游客请求。
+    if (!hasOAuth() || error.status !== 400) throw error;
+    as = { ...remix, anonymous: true };
+    answer = await call("browse", { browseId: "FEmusic_home" }, as);
+  }
   const sections = await sectionsOf(answer, videosOnly);
   // It comes in a few pages. Two more make a page that's worth scrolling.
   let token = nextToken(findOne(answer, "sectionListRenderer"));
   for (let i = 0; token && i < 2; i++) {
-    const more = await call("browse", { continuation: token });
+    const more = await call("browse", { continuation: token }, as);
     sections.push(...(await sectionsOf(more, videosOnly)));
     token = nextToken(findOne(more, "sectionListContinuation"));
   }

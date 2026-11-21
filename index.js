@@ -216,3 +216,19 @@ export async function followArtist({ id, on }) {
   if (on) await api('subscriptions', { part: 'snippet' }, 'POST', { snippet: { resourceId: { kind: 'youtube#channel', channelId: id } } });
   else { const answer = await api('subscriptions', { part: 'id', mine: true, forChannelId: id }); for (const item of answer.items || []) await api('subscriptions', { id: item.id }, 'DELETE'); }
 }
+
+/** 使用 Data API statistics 的公开总数；隐藏的计数保持未知。 */
+export async function interactionSummary({ trackId }) {
+  if (!videoId(trackId)) throw new Error('无效的 YouTube 视频 ID');
+  if (!hasOAuth()) return {};
+  const answer = await api('videos', { part: 'statistics', id: trackId, fields: 'items(statistics(likeCount,commentCount))' });
+  const stats = answer.items?.[0]?.statistics;
+  const result = {};
+  for (const [key, raw] of [['likes', stats?.likeCount], ['comments', stats?.commentCount]]) {
+    if ((typeof raw === 'string' && /^\d+$/.test(raw)) || typeof raw === 'number') {
+      const value = Number(raw);
+      if (Number.isSafeInteger(value) && value >= 0) result[key] = value;
+    }
+  }
+  return result;
+}

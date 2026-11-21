@@ -1,6 +1,6 @@
 # YouTube · MB 跨平台插件
 
-Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)。版本 **0.2.0**，需要宿主合同 0.1.28。插件 ID 保持 `youtube-music`，更新保留已有账号和设置。
+Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)。版本 **0.2.1**，需要宿主合同 0.1.28。插件 ID 保持 `youtube-music`，更新保留已有账号和设置。
 
 默认首页及搜索来自普通 YouTube；YouTube Music 保留为“音乐专区”，旧音乐视频、Charts、New Releases 路由继续兼容。公开网页请求不发送原生 OAuth Bearer，避免网页客户端拒绝原生令牌导致 400。网页配置读取当前真实客户端配置，不拼接日期猜版本。
 
@@ -30,3 +30,5 @@ npm test
 回归覆盖 AAC/H.264 选流、400 公开请求隔离、网页登录配置、普通搜索续页、Shorts 序列、字幕时间、顶层评论续页、播放列表删除条目 ID、OAuth 刷新/取消与账号保护。真实网络验证覆盖普通首页、搜索、Shorts 两页、评论、字幕、音乐专区、Charts、新发行和音乐视频。
 
 发布 ZIP 须包含 `plugin.json`、`index.js`、`music.js`、`oauth.js`、`youtube-web.js`、`youtube-api.js` 和 `locales/`。不附带私有数据。
+
+播放器互动总数：提供 `interactionSummary({trackId})` 返回平台公开的点赞和评论总数，隐藏计数保持未知。YouTube 使用已登录的官方 Data API；哔哩哔哩使用公开视频详情统计。

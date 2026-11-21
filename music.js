@@ -62,7 +62,7 @@ function sha1(text) {
 }
 
 // What the website sends to say whose session this is, to the site at origin.
-async function authHeaders(origin = site) {
+export async function authHeaders(origin = site) {
   const destination = new URL(origin);
   if (destination.protocol !== "https:" || destination.username || destination.password ||
       !["music.youtube.com", "www.youtube.com", "youtube.com", "s.youtube.com"].includes(destination.hostname) ||

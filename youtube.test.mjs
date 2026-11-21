@@ -48,13 +48,9 @@ test('caption timing uses unsigned native-player track and keeps multiline text'
  };
  assert.deepEqual((await plugin.lyrics({id})).lines,[{start:100,end:600,text:'Hello world'},{start:700,end:4700,text:'Next'}]);
 });
-test('official collections use Data API and playlist removal deletes item IDs, not video IDs',async()=>{
- session();const requests=[];globalThis.fetch=async(url,options)=>{requests.push({url,options});assert.equal(options.headers.authorization,'Bearer fixture-token');
-  if(url.includes('playlistItems?')&&options.method==='GET')return reply({items:[{id:'entry-id',snippet:{resourceId:{videoId:id}}}]});
-  if(url.includes('playlists?'))return reply({items:[{id:'playlist-id',snippet:{title:'My list'}}]});
-  return reply({},204);
- };
- assert.equal((await plugin.playlists())[0].mine,true);await plugin.removeFromPlaylist({id:'playlist-id',trackIds:[id]});assert.ok(requests.at(-1).url.includes('id=entry-id'));assert.equal(requests.at(-1).options.method,'DELETE');
+test('removed playlist mutation is not exposed and disabled comments return an empty page',async()=>{
+ session();
+ assert.equal(plugin.playlists,undefined);assert.equal(plugin.removeFromPlaylist,undefined);assert.equal(plugin.recent,undefined);assert.equal(plugin.played,undefined);
  globalThis.fetch=async()=>reply({error:{errors:[{reason:'commentsDisabled'}]}},403);
  assert.deepEqual(await plugin.comments({trackId:'00000000001'}),{comments:[],more:false});guest();
 });

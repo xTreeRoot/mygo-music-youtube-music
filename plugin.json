@@ -1,7 +1,7 @@
 {
   "id": "youtube-music",
   "name": "YouTube",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "minAppVersion": "0.1.28",
   "main": "index.js",
   "playback": "stream",
@@ -34,17 +34,6 @@
     {
       "title": "我的频道",
       "page": "my-channel"
-    },
-    {
-      "title": "观看记录（本机）",
-      "page": "recent"
-    },
-    {
-      "builtin": "playlists"
-    },
-    {
-      "title": "稍后观看 · MB",
-      "page": "watch-later"
     },
     {
       "builtin": "liked"

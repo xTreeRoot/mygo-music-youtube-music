@@ -18,7 +18,7 @@ async function setup(initial = {}, platform = 'ios') {
     set: (key, value) => storage.set(key, structuredClone(value)),
   }, oauthSignIn: async () => tokens(), webSignIn: () => { throw Error('embedded login must not open'); } };
   globalThis.fetch = async (url, options) => { requests.push({ url, ...options }); return response(account); };
-  const plugin = await import(`./index.js?oauth-test=${++sequence}`);
+  const plugin = await import(`./music.js?oauth-test=${++sequence}`);
   plugin.signOut();
   storage.clear();
   for (const [key, value] of Object.entries(initial)) storage.set(key, value);

@@ -39,6 +39,7 @@ function checkedTokens(value, previous, clientID = sessionClientID(previous || {
     expires: Date.now() + Number(value.expires_in) * 1000,
     clientID,
     active: true,
+    scopes: typeof value.scope === "string" ? value.scope.split(/\s+/) : previous?.scopes,
   };
 }
 
@@ -77,7 +78,7 @@ export async function oauthHeaders() {
   } finally { if (refreshing === pending) refreshing = null; }
 }
 
-export async function signInOAuth(verify) {
+export async function signInOAuth(verify, scopes = ["https://www.googleapis.com/auth/youtube"]) {
   if (typeof host.oauthSignIn !== "function") throw new Error("请更新 MB，以使用 Google 系统授权登录");
   const client = clients[host.platform];
   if (!client) throw new Error("当前平台尚未配置 Google 系统授权登录");
@@ -88,7 +89,7 @@ export async function signInOAuth(verify) {
   const previous = saved();
   try {
     // 重新登录先验证本机保留的会话，不把退出登录等同于删除账号资料。
-    if (previous?.refresh) {
+    if (previous?.refresh && (scopes.length === 1 || scopes.every(scope => previous.scopes?.includes(scope)))) {
       candidate = { ...previous, active: true };
       try {
         const me = await verify();
@@ -99,10 +100,11 @@ export async function signInOAuth(verify) {
     }
     const result = await host.oauthSignIn({
       authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth", tokenEndpoint, ...client,
-      scopes: ["https://www.googleapis.com/auth/youtube"],
+      scopes,
     });
     if (generation !== revision) throw new Error("登录状态已改变，请重试");
     candidate = checkedTokens(result, undefined, client.clientID);
+    candidate.scopes ??= scopes;
     const me = await verify();
     if (generation !== revision) throw new Error("登录状态已改变，请重试");
     if (!me) throw new Error("YouTube Music 没有接受这次授权，请重试");

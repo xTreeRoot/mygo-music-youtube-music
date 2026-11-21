@@ -1,8 +1,8 @@
 {
   "id": "youtube-music",
-  "name": "YouTube Music",
-  "version": "0.1.8",
-  "minAppVersion": "0.1.26",
+  "name": "YouTube",
+  "version": "0.2.0",
+  "minAppVersion": "0.1.28",
   "main": "index.js",
   "playback": "stream",
   "permissions": {
@@ -13,7 +13,9 @@
       "s.youtube.com",
       "api.betterlyrics.org",
       "*.googlevideo.com",
-      "youtube.googleapis.com"
+      "youtube.googleapis.com",
+      "www.youtube.com",
+      "youtube.com"
     ]
   },
   "navigation": [
@@ -21,25 +23,39 @@
       "builtin": "home"
     },
     {
-      "title": "音乐视频",
-      "page": "videos",
+      "title": "Shorts",
+      "page": "shorts",
       "icon": "play"
     },
     {
-      "title": "Charts",
-      "page": "charts",
-      "icon": "chart"
+      "title": "订阅",
+      "page": "subscriptions"
     },
     {
-      "title": "New Releases",
-      "page": "new",
-      "icon": "star"
+      "title": "我的频道",
+      "page": "my-channel"
     },
     {
-      "builtin": "stations"
+      "title": "观看记录（本机）",
+      "page": "recent"
+    },
+    {
+      "builtin": "playlists"
+    },
+    {
+      "title": "稍后观看 · MB",
+      "page": "watch-later"
     },
     {
       "builtin": "liked"
+    },
+    {
+      "title": "我的视频",
+      "page": "uploads"
+    },
+    {
+      "title": "音乐专区",
+      "page": "music"
     }
   ]
 }

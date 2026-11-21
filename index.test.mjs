@@ -10,7 +10,7 @@ async function setup(formats, status = { status: 'OK' }, progressive = [], video
       ? { responseContext: { visitorData: 'synthetic-visitor' } }
       : { playabilityStatus: status, streamingData: { adaptiveFormats: formats, formats: progressive }, videoDetails } };
   };
-  return { plugin: await import(`./index.js?test=${++sequence}`), requests };
+  return { plugin: await import(`./music.js?test=${++sequence}`), requests };
 }
 const aac = (bitrate, extra = {}) => ({ mimeType: 'audio/mp4; codecs="mp4a.40.2"', url: `https://r1.googlevideo.com/videoplayback?synthetic=${bitrate}`, bitrate, ...extra });
 test('native AAC selection replaces ffmpeg and reports the real bitrate', async () => {
@@ -85,7 +85,7 @@ test('video browsing keeps wide artwork and search resumes its own video filter'
     else answer = { musicShelfRenderer: { contents: [music, movie], continuations: [{ nextContinuationData: { continuation: 'fixture' } }] } };
     return { ok: true, json: async () => answer };
   };
-  const plugin = await import(`./index.js?test=${++sequence}`);
+  const plugin = await import(`./music.js?test=${++sequence}`);
   const [section] = (await plugin.browse({ page: 'videos' })).sections;
   assert.equal(section.trackLayout, 'videos');
   assert.deepEqual(section.tracks.map(track => [track.id, track.name, track.artists[0].name, track.duration]), [['00000000002', 'Actual MV', 'Artist', 188000]]);
@@ -123,7 +123,7 @@ test('the video hub opens the full gallery and playable regional charts, not the
     assert.ok(answers[browseId], browseId);
     return { ok: true, json: async () => answers[browseId] };
   };
-  const plugin = await import(`./index.js?test=${++sequence}`);
+  const plugin = await import(`./music.js?test=${++sequence}`);
   const home = await plugin.browse({ page: 'videos' });
   assert.equal(home.sections[0].tracks.length, 6);
   assert.deepEqual(requests, ['FEmusic_new_releases', 'FEmusic_charts']);
@@ -159,7 +159,7 @@ test('public comments use only the matching top-level continuation and preserve 
     const answer = { [trackId]: initial, page1: first, page2: second }[requested.at(-1)];
     return { ok: true, json: async () => answer || {} };
   };
-  const plugin = await import(`./index.js?test=${++sequence}`);
+  const plugin = await import(`./music.js?test=${++sequence}`);
   const head = await plugin.comments({ trackId });
   assert.deepEqual(head.comments.map(item => [item.text, item.likes]), [['First', 312], ['Second', undefined]]);
   assert.equal(head.total, 2100);

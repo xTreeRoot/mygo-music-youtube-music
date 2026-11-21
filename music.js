@@ -1043,15 +1043,27 @@ export async function stream({ id, quality = "high" }) {
   };
 }
 
-export async function video({ id, quality = "high" }) {
+export async function video({ id, quality = "auto" }) {
   if (!validVideoID(id)) throw fail("unavailable", "无效的 YouTube 视频 ID");
   const result = await playerResponse(id);
   const status = result.playabilityStatus || {};
   if (status.status !== "OK") throw fail("unavailable", status.reason || t("No directly playable YouTube video"));
   const formats = videoFormats(result);
   if (!formats.length) throw fail("unavailable", t("No directly playable YouTube video"));
-  const ceiling = quality === "standard" ? 360 : 720;
-  formats.sort((left, right) => Number(right.height) - Number(left.height) || Number(left.bitrate || 0) - Number(right.bitrate || 0));
-  const selected = formats.find(format => Number(format.height) <= ceiling) || formats.at(-1);
-  return { url: selected.url, type: "mp4", headers: { "User-Agent": visionUA } };
+  // 竖屏的 1080×1920 同样是 1080p；音乐音质不再把视频限制在 720p。
+  const resolution = format => Math.min(Number(format.width) || Number(format.height), Number(format.height));
+  const requested = /^(\d{2,4})p$/.exec(quality);
+  const ceiling = quality === "standard" ? 360 : requested ? Number(requested[1]) : Infinity;
+  formats.sort((left, right) => resolution(right) - resolution(left) ||
+    Number(right.fps || 0) - Number(left.fps || 0) || Number(right.bitrate || 0) - Number(left.bitrate || 0));
+  const selected = formats.find(format => resolution(format) <= ceiling) || formats.at(-1);
+  const seen = new Set();
+  const videoQualities = formats.flatMap(format => {
+    const height = resolution(format), id = `${height}p`;
+    if (seen.has(id)) return [];
+    seen.add(id);
+    return [{ id, label: id + (Number(format.fps) > 30 ? Math.round(Number(format.fps)) : "") }];
+  });
+  return { url: selected.url, type: "mp4", headers: { "User-Agent": visionUA },
+    videoQuality: `${resolution(selected)}p`, videoQualities };
 }

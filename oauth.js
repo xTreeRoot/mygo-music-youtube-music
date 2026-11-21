@@ -1,5 +1,15 @@
 // 系统 OAuth 登录、刷新与独立会话存储；不访问或同步浏览器 Cookie。
-const clientID = "917134708837-jg4va90dtmb2bcme3vsoukfq149htrp5.apps.googleusercontent.com";
+// 公开原生客户端标识；每个平台使用 Google 控制台中对应类型的客户端。
+const clients = {
+  ios: {
+    clientID: "917134708837-jg4va90dtmb2bcme3vsoukfq149htrp5.apps.googleusercontent.com",
+    redirectURI: "com.googleusercontent.apps.917134708837-jg4va90dtmb2bcme3vsoukfq149htrp5:/oauthredirect",
+  },
+  android: {
+    clientID: "917134708837-7485b4m60npe0htgob42mtotnma12gn1.apps.googleusercontent.com",
+    redirectURI: "com.xtreeroot.mb:/oauth2redirect",
+  },
+};
 const tokenEndpoint = "https://oauth2.googleapis.com/token";
 const storageKey = "oauthSession";
 let candidate = null;
@@ -11,7 +21,14 @@ const saved = () => host.storage.get(storageKey);
 export const isOAuthSignInPending = () => signingIn;
 export const hasOAuth = () => Boolean(candidate || saved()?.active);
 
-function checkedTokens(value, previous) {
+function sessionClientID(session) {
+  // 0.1.7 及以前仅有 iOS OAuth，会话尚未包含客户端字段。
+  const clientID = session.clientID ?? clients.ios.clientID;
+  if (!Object.values(clients).some(client => client.clientID === clientID)) throw new Error("Google 登录配置已改变，请重新登录");
+  return clientID;
+}
+
+function checkedTokens(value, previous, clientID = sessionClientID(previous || {})) {
   if (typeof value?.access_token !== "string" || !value.access_token || /[\r\n]/.test(value.access_token) ||
       String(value.token_type).toLowerCase() !== "bearer" || !Number.isFinite(Number(value.expires_in)) || Number(value.expires_in) <= 0) {
     throw new Error("Google 未返回有效的登录令牌，请重新登录");
@@ -20,6 +37,7 @@ function checkedTokens(value, previous) {
     access: value.access_token,
     refresh: typeof value.refresh_token === "string" && value.refresh_token ? value.refresh_token : previous?.refresh,
     expires: Date.now() + Number(value.expires_in) * 1000,
+    clientID,
     active: true,
   };
 }
@@ -29,7 +47,7 @@ async function refreshSession(session, generation) {
   if (!session.refresh) throw new Error("YouTube 登录已过期，请重新登录");
   const response = await fetch(tokenEndpoint, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: clientID, grant_type: "refresh_token", refresh_token: session.refresh }).toString(),
+    body: new URLSearchParams({ client_id: sessionClientID(session), grant_type: "refresh_token", refresh_token: session.refresh }).toString(),
   });
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
@@ -48,7 +66,7 @@ export async function oauthHeaders() {
   if (!session?.active) return {};
   const generation = revision;
   if (!refreshing || refreshing.generation !== generation || refreshing.session.access !== session.access ||
-      refreshing.session.refresh !== session.refresh || refreshing.session.expires !== session.expires) {
+      refreshing.session.refresh !== session.refresh || refreshing.session.expires !== session.expires || refreshing.session.clientID !== session.clientID) {
     refreshing = { session, generation, promise: refreshSession(session, generation) };
   }
   const pending = refreshing;
@@ -61,6 +79,8 @@ export async function oauthHeaders() {
 
 export async function signInOAuth(verify) {
   if (typeof host.oauthSignIn !== "function") throw new Error("请更新 MB，以使用 Google 系统授权登录");
+  const client = clients[host.platform];
+  if (!client) throw new Error("当前平台尚未配置 Google 系统授权登录");
   if (signingIn) throw new Error("Google 登录正在进行中");
   signingIn = true;
   const generation = ++revision;
@@ -78,12 +98,11 @@ export async function signInOAuth(verify) {
       candidate = null;
     }
     const result = await host.oauthSignIn({
-      authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth", tokenEndpoint, clientID,
-      redirectURI: "com.googleusercontent.apps.917134708837-jg4va90dtmb2bcme3vsoukfq149htrp5:/oauthredirect",
+      authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth", tokenEndpoint, ...client,
       scopes: ["https://www.googleapis.com/auth/youtube"],
     });
     if (generation !== revision) throw new Error("登录状态已改变，请重试");
-    candidate = checkedTokens(result);
+    candidate = checkedTokens(result, undefined, client.clientID);
     const me = await verify();
     if (generation !== revision) throw new Error("登录状态已改变，请重试");
     if (!me) throw new Error("YouTube Music 没有接受这次授权，请重试");

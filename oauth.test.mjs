@@ -6,11 +6,13 @@ const account = { items: [{ id: 'UCfixture', snippet: { title: 'Fixture', thumbn
 const tokens = (access = 'synthetic-access') => ({ access_token: access, refresh_token: 'synthetic-refresh', expires_in: 3600, token_type: 'Bearer' });
 const session = (extra = {}) => ({ access: 'old-access', refresh: 'old-refresh', expires: Date.now() + 3600000, active: true, ...extra });
 const response = (data, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => data });
+const androidClient = '917134708837-7485b4m60npe0htgob42mtotnma12gn1.apps.googleusercontent.com';
+const iosClient = '917134708837-jg4va90dtmb2bcme3vsoukfq149htrp5.apps.googleusercontent.com';
 
-async function setup(initial = {}) {
+async function setup(initial = {}, platform = 'ios') {
   const storage = new Map();
   const requests = [];
-  globalThis.host = { platform: 'ios', t: text => text, language: () => 'en', storage: {
+  globalThis.host = { platform, t: text => text, language: () => 'en', storage: {
     // Match the native host's serialized value semantics.
     get: key => storage.has(key) ? structuredClone(storage.get(key)) : null,
     set: (key, value) => storage.set(key, structuredClone(value)),
@@ -31,6 +33,8 @@ test('iOS uses system OAuth, validates with Bearer and preserves disabled sessio
     assert.equal(options.authorizationEndpoint, 'https://accounts.google.com/o/oauth2/v2/auth');
     assert.equal(options.tokenEndpoint, 'https://oauth2.googleapis.com/token');
     assert.ok(options.clientID.endsWith('.apps.googleusercontent.com'));
+    assert.equal(options.clientID, iosClient);
+    assert.equal(options.redirectURI, 'com.googleusercontent.apps.917134708837-jg4va90dtmb2bcme3vsoukfq149htrp5:/oauthredirect');
     assert.deepEqual(options.scopes, ['https://www.googleapis.com/auth/youtube']);
     return tokens();
   };
@@ -48,6 +52,57 @@ test('iOS uses system OAuth, validates with Bearer and preserves disabled sessio
   assert.equal(await plugin.account(), null);
   assert.equal((await plugin.signIn()).name, 'Fixture');
   assert.equal(prompts, 1, 'valid saved session is reused before asking again');
+});
+
+test('Android opens system OAuth with its registered native client and refreshes with the issuing client', async () => {
+  const { plugin, storage, requests } = await setup({ cookie: 'previous-cookie', cookieActive: true }, 'android');
+  let prompts = 0;
+  host.oauthSignIn = async options => {
+    prompts++;
+    assert.equal(options.clientID, androidClient);
+    assert.equal(options.redirectURI, 'com.xtreeroot.mb:/oauth2redirect');
+    assert.equal(options.authorizationEndpoint, 'https://accounts.google.com/o/oauth2/v2/auth');
+    assert.deepEqual(options.scopes, ['https://www.googleapis.com/auth/youtube']);
+    return tokens();
+  };
+  assert.equal((await plugin.signIn()).id, 'UCfixture');
+  assert.equal(prompts, 1);
+  assert.equal(requests[0].headers.authorization, 'Bearer synthetic-access');
+  assert.equal(requests[0].headers.cookie, undefined);
+  assert.equal(storage.get('cookieActive'), false);
+  assert.equal(storage.get('cookie'), 'previous-cookie');
+  const issued = storage.get('oauthSession');
+  assert.equal(issued.clientID, androidClient);
+  storage.set('oauthSession', { ...issued, expires: 0 });
+  // Refresh follows the saved issuing client, rather than whichever platform is now selected.
+  host.platform = 'ios';
+  let refreshes = 0;
+  globalThis.fetch = async (url, options) => {
+    if (url === 'https://oauth2.googleapis.com/token') {
+      refreshes++;
+      assert.equal(new URLSearchParams(options.body).get('client_id'), androidClient);
+      return response({ ...tokens('android-renewed'), refresh_token: undefined });
+    }
+    return response(account);
+  };
+  assert.equal((await plugin.account()).id, 'UCfixture');
+  assert.equal(refreshes, 1);
+  assert.equal(storage.get('oauthSession').clientID, androidClient);
+  assert.equal(storage.get('oauthSession').refresh, issued.refresh);
+});
+
+test('Android cancellation and missing system OAuth never fall back to embedded Google login', async () => {
+  const previous = session({ clientID: androidClient, active: false });
+  const { plugin, storage } = await setup({ oauthSession: previous, cookie: 'old-cookie', cookieActive: true }, 'android');
+  globalThis.fetch = async () => response({}, 401);
+  host.oauthSignIn = async () => { throw Error('user-cancelled'); };
+  await assert.rejects(plugin.signIn(), /user-cancelled/);
+  assert.deepEqual(storage.get('oauthSession'), previous);
+  assert.equal(storage.get('cookie'), 'old-cookie');
+  assert.equal(storage.get('cookieActive'), true);
+  delete host.oauthSignIn;
+  await assert.rejects(plugin.signIn(), /请更新 MB/);
+  assert.deepEqual(storage.get('oauthSession'), previous);
 });
 
 test('rejected saved OAuth can open a fresh login and failed validation does not replace the old session', async () => {
@@ -94,6 +149,7 @@ test('parallel account requests share a refresh and never send credentials to an
       refreshes++;
       const form = new URLSearchParams(options.body);
       assert.equal(form.get('grant_type'), 'refresh_token');
+      assert.equal(form.get('client_id'), iosClient, 'legacy untagged sessions remain iOS sessions');
       assert.equal(form.get('refresh_token'), 'old-refresh');
       assert.equal(form.has('client_secret'), false);
       await new Promise(resolve => setImmediate(resolve));

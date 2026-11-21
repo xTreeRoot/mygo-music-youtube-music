@@ -1,6 +1,6 @@
 # YouTube Music · MB 跨平台插件
 
-Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)，保留上游页面、搜索、歌单、账号与歌词实现。版本 **0.1.6**，宿主插件兼容版本至少 0.1.26。桌面、iOS 与 Android 使用同一份包，无需桌面进程。
+Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)，保留上游页面、搜索、歌单、账号与歌词实现。版本 **0.1.8**，宿主插件兼容版本至少 0.1.26。桌面、iOS 与 Android 使用同一份包，无需桌面进程。
 
 ## 音乐与视频
 
@@ -20,17 +20,17 @@ Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-
 
 在 MB 插件页从 GitHub 安装 `xTreeRoot/mygo-music-youtube-music`，或导入 [Releases](https://github.com/xTreeRoot/mygo-music-youtube-music/releases) 中的 ZIP。插件 ID 仍为 `youtube-music`。
 
-需要当前设备网络能够访问 YouTube。iOS 登录改用 `host.oauthSignIn`：系统 ASWebAuthenticationSession 打开 Google 授权，宿主生成 PKCE/state 并交换授权码，不再通过内嵌 WKWebView 提取 Cookie。使用 MB 自己的公开 iOS 客户端 ID，回调 scheme 必须在 App 中注册。请求 `https://www.googleapis.com/auth/youtube` 以兼容原有喜欢、歌单和播放历史；每次账号访问仍由用户在 Google 页面授权。
+需要当前设备网络能够访问 YouTube。iOS 和 Android 登录使用 `host.oauthSignIn`：iOS 通过 ASWebAuthenticationSession、Android 通过系统浏览器打开 Google 授权，宿主生成 PKCE/state 并交换授权码，不再通过内嵌 WebView 提取 Google Cookie。两端分别使用 MB 自己的公开原生客户端 ID。Android 客户端绑定包名 `com.xtreeroot.mb` 与原签名证书，回调为已注册的 `com.xtreeroot.mb:/oauth2redirect`；Google 控制台已由所有者确认启用自定义 URI scheme。系统浏览器流程不依赖 Google Play 服务。请求 `https://www.googleapis.com/auth/youtube` 以兼容原有喜欢、歌单和播放历史；每次账号访问仍由用户在 Google 页面授权。
 
-iOS OAuth 的账号读取使用官方 `channels.list(part=snippet,mine=true)`，避免网页 `account_menu` 拒绝原生授权。无频道或官方接口失败时明确报错，不保存未验证会话。个人库仍沿用原有 YouTube Music 浏览接口，需真机验证。
+原生 OAuth 的账号读取使用官方 `channels.list(part=snippet,mine=true)`，避免网页 `account_menu` 拒绝原生授权。无频道或官方接口失败时明确报错，不保存未验证会话。个人库仍沿用原有 YouTube Music 浏览接口，需真机验证。
 
-当前 OAuth 应用处于外部测试模式，只允许配置的测试用户；Google 测试模式下刷新令牌通常 7 天失效，届时需重新授权。桌面保留既有网页桥，Android 缺少登录桥时仍可使用游客功能。系统浏览器使用系统网络，不受 MB 的 URLSession 域名代理开关控制。
+当前 OAuth 应用处于外部测试模式，只允许配置的测试用户；Google 测试模式下刷新令牌通常 7 天失效，届时需重新授权。桌面保留既有网页桥；移动端缺少系统授权能力时提示更新 MB，不退回 Google 已拒绝的内嵌浏览器。系统浏览器使用系统网络，手机需有可访问 Google 的网络。
 
-令牌保存在宿主提供的插件私有数据目录，退出仅停用，重新登录先验证本地保留的会话。候选会话验证成功才替换旧值；取消、刷新网络失败和迟到响应不会覆盖旧登录。源码与安装包只包含公开客户端配置，没有用户令牌或客户端密钥。
+令牌保存在宿主提供的插件私有数据目录，退出仅停用，重新登录先验证本地保留的会话。候选会话验证成功才替换旧值；取消、刷新网络失败和迟到响应不会覆盖旧登录。会话记录签发它的公开客户端 ID，刷新时沿用同一客户端；旧版未标记的会话按原 iOS 客户端兼容。源码与安装包只包含公开客户端配置，没有用户令牌或客户端密钥。
 
 ## 验证范围
 
-AAC/H.264 选流、原始封面、完整新发行库、地区视频榜、链接搜索、评论续页及 OAuth 会话验证/刷新/取消有自动回归。Google 登录和各端完整播放及 UI 仍需真机验收。
+AAC/H.264 选流、原始封面、完整新发行库、地区视频榜、链接搜索、评论续页及 OAuth 会话验证/刷新/取消有自动回归。Google 登录和各端完整播放及 UI 仍需真机验收。0.1.8 的 Android 原生客户端与 PKCE 请求已在系统浏览器合同检查中进入 Google 账号选择及测试应用提示；真实账号完成授权与回跳需在手机操作后验收。
 
 ```sh
 npm run check

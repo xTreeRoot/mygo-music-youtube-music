@@ -417,7 +417,7 @@ const signInPage =
   "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&uilel=3&passive=true" +
   "&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F";
 
-// Desktop hosts retain their existing web sign-in; iOS uses system OAuth below.
+// Desktop hosts retain their existing web sign-in; mobile hosts use system OAuth below.
 const browserUA =
   host.platform === "darwin"
     ? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15"
@@ -425,22 +425,14 @@ const browserUA =
 
 export async function signIn() {
   accountRevision += 1;
-  if (host.platform === "ios") {
+  if (host.platform === "ios" || host.platform === "android") {
     likedSet = null;
     const me = await signInOAuth(account);
     host.storage.set("cookieActive", false);
     return me;
   }
   if (typeof host.webSignIn !== "function") throw fail("setup", t("This host cannot show the YouTube Music sign-in page"));
-  let result;
-  try {
-    result = await host.webSignIn({ url: signInPage, cookiesOf: site, until: ["SAPISID", "__Secure-3PSID"], userAgent: browserUA });
-  } catch (error) {
-    if (host.platform === "android" && error.message === "Host request is unavailable on Android") {
-      throw fail("setup", t("This host cannot show the YouTube Music sign-in page"));
-    }
-    throw error;
-  }
+  const result = await host.webSignIn({ url: signInPage, cookiesOf: site, until: ["SAPISID", "__Secure-3PSID"], userAgent: browserUA });
   const { cookie: session } = result;
   host.storage.set("cookie", session);
   host.storage.set("cookieActive", true);

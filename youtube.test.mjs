@@ -25,12 +25,12 @@ test('ordinary home uses video feed and Shorts parses server sequence metadata a
   if(url.endsWith('/shorts/'))return reply('var ytInitialData = '+JSON.stringify({sequenceContinuation:'start'})+';');
   const b=JSON.parse(options.body);
   if(url.includes('/browse?'))return reply({contents:[row(id)]});
-  assert.ok(url.includes('reel_watch_sequence'));assert.equal(b.sequenceParams,sequence++?'next-sequence':'start');
-  return reply({entries:[{command:{reelWatchEndpoint:{videoId:id,thumbnail:{thumbnails:[{url:'https://i.ytimg.com/portrait',width:1080,height:1920}]},unserializedPrefetchData:{playerResponse:{videoDetails:{videoId:id,title:'Short fixture',lengthSeconds:'27',author:'Creator'}}}}}}],continuationEndpoint:{continuationCommand:{token:sequence===1?'next-sequence':undefined}}});
+  assert.ok(url.includes('reel_watch_sequence'));assert.ok(['start','next-sequence'].includes(b.sequenceParams)); sequence++;
+  return reply({entries:[{command:{reelWatchEndpoint:{videoId:id,thumbnail:{thumbnails:[{url:'https://i.ytimg.com/portrait',width:1080,height:1920}]},unserializedPrefetchData:{playerResponse:{videoDetails:{videoId:id,title:'Short fixture',lengthSeconds:'27',author:'Creator'}}}}}}],continuationEndpoint:{continuationCommand:{token:b.sequenceParams==='start'?'next-sequence':undefined}}});
  };
  const home=await plugin.home();assert.equal(home.sections.at(-1).tracks[0].name,'Ordinary video');
  const first=await plugin.browse({page:'shorts'});assert.equal(first.more,true);const track=first.sections[0].tracks[0];assert.equal(track.video.short,true);assert.equal(track.video.height,1920);
- const second=await plugin.browse({page:'shorts',offset:1});assert.equal(second.more,false);assert.equal(sequence,2);
+ const second=await plugin.browse({page:'shorts',offset:1});assert.equal(second.more,false);assert.equal(sequence,3);
 });
 test('public comments read modern entities and only top-level continuation',async()=>{
  guest();let count=0;globalThis.fetch=async(url,options)=>{

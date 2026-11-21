@@ -18,7 +18,7 @@ const shelf = (title, tracks, continuation, short = false) => ({ shelfRenderer: 
   content: { horizontalListRenderer: { items: tracks, ...next(continuation) } } } });
 const page = (shelves, continuation) => ({ ...tracking, contents: { sectionListRenderer: { contents: shelves, ...next(continuation) } } });
 const guide = { ...tracking, items: [{ guideEntryRenderer: { formattedTitle: { simpleText: 'Home' }, navigationEndpoint: { browseEndpoint: { browseId: 'FEtopics' } } } },
-  { guideEntryRenderer: { formattedTitle: { simpleText: '音乐' }, navigationEndpoint: { browseEndpoint: { browseId: 'FEtopics_music' } } } }] };
+  ...['music', 'movies', 'gaming', 'news', 'podcasts'].map(kind => ({ guideEntryRenderer: { formattedTitle: { simpleText: kind }, navigationEndpoint: { browseEndpoint: { browseId: 'FEtopics_' + kind } } } }))] };
 function session() { data.clear(); data.set('oauthSession', { active: true, access: 'fixture-token', expires: Date.now() + 3_600_000 }); feed.resetFeeds(); }
 const id = '00000000001', other = '00000000002', third = '00000000003';
 
@@ -29,34 +29,36 @@ test('signed-in home forwards native authorization only through TV feed and pres
     assert.equal(options.headers['x-youtube-client-name'], '7');
     const body = JSON.parse(options.body); assert.equal(body.context.client.clientName, 'TVHTML5'); requests.push(body);
     if (url.includes('/guide?')) return reply(guide);
-    return reply(page([shelf('为你推荐', [tile(id)], 'shelf-next'), shelf('Shorts', [tile(other, true)], 'short-next', true)], 'home-next'));
+    return reply(body.continuation === 'home-next' ? page([shelf('推荐的音乐视频', [tile(third)], 'music-next'), shelf('其他栏目', [tile(id)])]) : page([shelf('为你推荐', [tile(id)], 'shelf-next'), shelf('Shorts', [tile(other, true)], 'short-next', true)], 'home-next'));
   };
   const home = await feed.home();
-  assert.deepEqual(home.sections.map(s => s.title), ['为你推荐', 'Shorts']);
+  assert.deepEqual(home.sections.map(s => s.tracks[0]?.id), [third, other, id]);
   assert.equal(home.sections[0].morePage.startsWith('yt-feed:'), true);
-  assert.equal(JSON.parse(decodeURIComponent(home.sections[0].morePage.slice(8))).request.continuation, 'shelf-next');
-  assert.deepEqual(home.tabs.map(t => t.title), ['全部', '音乐']);
+  assert.equal(JSON.parse(decodeURIComponent(home.sections[0].morePage.slice(8))).request.continuation, 'music-next');
+  assert.equal(JSON.parse(decodeURIComponent(home.sections[2].morePage.slice(8))).request.continuation, 'shelf-next');
+  assert.deepEqual(home.tabs.map(t => t.title), ['全部', '音乐', '播客', '游戏']);
   assert.equal(JSON.parse(decodeURIComponent(home.tabs[1].page.slice(8))).request.browseId, 'FEtopics_music');
   assert.equal(home.sections[1].tracks[0].video.height, 1920);
   assert.equal(home.sections[1].tracks[0].album.imageUrl, 'https://i.ytimg.com/portrait');
   assert.equal(requests[0].browseId, 'FEwhat_to_watch');
 });
 
-test('topics and home vertical continuation survive module reload while stale cursor is discarded after refresh', async () => {
+test('topic vertical continuation survive module reload while stale cursor is discarded after refresh', async () => {
   session(); const requests = [];
   globalThis.fetch = async (url, options) => {
     if (url.includes('/guide?')) return reply(guide);
     const body = JSON.parse(options.body); requests.push(body);
-    return reply(body.continuation ? { ...tracking, continuationContents: { sectionListContinuation: { contents: [shelf('第二页', [tile(other)])] } } } : page([shelf('推荐', [tile(id)])], 'next-home'));
+    return reply(body.continuation ? { ...tracking, continuationContents: { sectionListContinuation: { contents: [shelf('第二页', [tile(other)])] } } } : page([shelf('推荐视频', [tile(id)])], 'next-home'));
   };
-  assert.equal((await feed.browse({ page: 'feed:home' })).more, true);
+  const route = 'yt-feed:' + encodeURIComponent(JSON.stringify({ request: { browseId: 'FEtopics_music' }, title: 'Music' }));
+  assert.equal((await feed.browse({ page: route })).more, true);
   const restored = await import('./youtube-feed.js?restart=1');
-  const second = await restored.browse({ page: 'feed:home', offset: 1 });
+  const second = await restored.browse({ page: route, offset: 1 });
   assert.equal(second.sections[0].tracks[0].id, other); assert.equal(second.more, false);
   assert.equal(requests.at(-1).continuation, 'next-home');
-  data.set('youtube.feed.pages.v1', { 'feed:home:99': { token: 'stale' } });
-  await feed.browse({ page: 'feed:home' });
-  assert.equal(data.get('youtube.feed.pages.v1')['feed:home:99'], undefined);
+  data.set('youtube.feed.pages.v1', { [route + ':99']: { token: 'stale' } });
+  await feed.browse({ page: route });
+  assert.equal(data.get('youtube.feed.pages.v1')[route + ':99'], undefined);
 });
 
 test('Shorts use authenticated shelf order, real continuation and deduplicate overlapping videos', async () => {
@@ -104,12 +106,12 @@ test('temporary category failure preserves loaded recommendations and retries ca
   session(); let guideRequests = 0;
   globalThis.fetch = async url => {
     if (url.includes('/guide?')) return ++guideRequests === 1 ? reply({}, 503) : reply(guide);
-    return reply(page([shelf('推荐', [tile(id)])]));
+    return reply(page([shelf('推荐视频', [tile(id)])]));
   };
   const first = await feed.home();
-  assert.equal(first.sections[0].tracks[0].id, id); assert.deepEqual(first.tabs, []);
+  assert.equal(first.sections[2].tracks[0].id, id); assert.deepEqual(first.tabs, []);
   const second = await feed.home();
-  assert.deepEqual(second.tabs.map(item => item.title), ['全部', '音乐']);
+  assert.deepEqual(second.tabs.map(item => item.title), ['全部', '音乐', '播客', '游戏']);
 });
 
 test('invalid routes cannot inject arbitrary browse endpoint or more than one parameter', async () => {
@@ -117,4 +119,76 @@ test('invalid routes cannot inject arbitrary browse endpoint or more than one pa
   for (const request of [{ browseId: 'arbitrary' }, { browseId: 'FEtopics_music', continuation: 'x' }, { continuation: 42 }]) {
     await assert.rejects(feed.browse({ page: 'yt-feed:' + encodeURIComponent(JSON.stringify({ request, title: 'x' })) }), /无效/);
   }
+});
+
+test('All to Music to All and refresh rebuild the complete homepage with independent shelf cursors', async () => {
+  session(); let homes = 0; const requests = [];
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/guide?')) return reply(guide);
+    const body = JSON.parse(options.body); requests.push(body);
+    if (body.browseId === 'FEwhat_to_watch') { homes++; return reply(page([shelf('推荐视频', [tile(id)], 'videos-' + homes)], 'tail-' + homes)); }
+    if (body.browseId === 'FEtopics_music') return reply(page([shelf('最近播放的音乐', [tile(id)])]));
+    if (body.continuation?.startsWith('tail-')) return reply(page([
+      shelf('推荐的音乐视频', [tile(third)], 'music-' + homes), shelf('Shorts', [tile(other, true)], 'short-' + homes, true),
+      shelf('其他栏目', [tile(id)])]));
+    if (body.continuation === 'short-3') return reply({ ...tracking, continuationContents: { horizontalListContinuation: { items: [tile(third, true)] } } });
+    throw new Error('Unexpected request');
+  };
+  const initial = await feed.home();
+  const music = await feed.browse({ page: initial.tabs[1].page });
+  assert.equal(music.sections[0].tracks[0].id, id);
+  let restored;
+  for (const route of ['feed:home', 'category:all']) {
+    restored = await feed.browse({ page: route });
+    assert.deepEqual(restored.sections.map(s => s.tracks.map(t => t.id)), [[third], [other], [id]]);
+    assert.equal(restored.selectedTab, initial.selectedTab);
+    assert.equal(restored.more, false);
+    assert.equal(JSON.parse(decodeURIComponent(restored.sections[1].morePage.slice(8))).request.continuation, 'short-' + homes);
+  }
+  const shorts = await feed.browse({ page: restored.sections[1].morePage });
+  assert.equal(shorts.sections[0].tracks[0].id, third);
+  const refreshed = await feed.home();
+  assert.equal(homes, 4);
+  assert.deepEqual(refreshed.sections.map(s => s.tracks.map(t => t.id)), [[third], [other], [id]]);
+  assert.equal(requests.filter(body => body.browseId === 'FEwhat_to_watch').length, 4);
+});
+
+test('missing music recommendations use only the server-declared music category and keep shelf pagination', async () => {
+  session(); const requests = [];
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/guide?')) return reply(guide);
+    const body = JSON.parse(options.body); requests.push(body);
+    if (body.browseId === 'FEwhat_to_watch') return reply(page([shelf('推荐视频', [tile(id)]), shelf('Shorts', [tile(other, true)], undefined, true)]));
+    if (body.browseId === 'FEtopics_music') return reply(page([shelf('老歌重温', [tile(id)]), shelf('推荐的音乐视频', [tile(third)], 'music-more')]));
+    assert.equal(body.continuation, 'music-more');
+    return reply({ ...tracking, continuationContents: { horizontalListContinuation: { items: [tile(other)] } } });
+  };
+  const home = await feed.home();
+  const more = await feed.browse({ page: home.sections[0].morePage });
+  assert.deepEqual(home.sections.map(s => s.tracks[0]?.id), [third, other, id]);
+  assert.equal(more.sections[0].tracks[0].id, other);
+  assert.deepEqual(requests.map(body => body.browseId || body.continuation), ['FEwhat_to_watch', 'FEtopics_music', 'music-more']);
+});
+
+test('Shorts sequence without inline metadata batches official account details and keeps the returned order', async () => {
+  session(); let metadataRequests = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (url.endsWith('/shorts/')) return reply('var ytInitialData = {"sequenceContinuation":"sequence"};');
+    if (url.includes('youtube.googleapis.com/youtube/v3/videos?')) {
+      metadataRequests++;
+      assert.equal(options.headers.authorization, 'Bearer fixture-token');
+      assert.equal(new URL(url).searchParams.get('id'), [other, id, third].join(','));
+      return reply({ items: [id, other].map(id => ({ id, snippet: { title: 'Short ' + id, channelId: 'UCfixture', channelTitle: 'Creator' }, contentDetails: { duration: 'PT27S' } })) });
+    }
+    const body = JSON.parse(options.body);
+    if (url.includes('/browse?')) return reply(page([shelf('推荐视频', [tile(id)])]));
+    assert.equal(body.sequenceParams, 'sequence');
+    return reply({ ...tracking, entries: [other, id, third].map(videoId => ({ command: { reelWatchEndpoint: { videoId,
+      thumbnail: { thumbnails: [{ url: 'https://i.ytimg.com/portrait', width: 1080, height: 1920 }] } } } })), continuation: 'sequence-next' });
+  };
+  const result = await feed.browse({ page: 'shorts' });
+  assert.deepEqual(result.sections[0].tracks.map(t => t.id), [other, id]);
+  assert.equal(result.sections[0].tracks[0].duration, 27_000);
+  assert.equal(result.sections[0].tracks[0].video.height, 1920);
+  assert.equal(result.more, true); assert.equal(metadataRequests, 1);
 });

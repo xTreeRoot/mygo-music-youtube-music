@@ -2,6 +2,7 @@
 import { hasOAuth } from './oauth.js';
 import { feedCall, webPage, videos, continuation, embedded, videoId, text, find, resetFeedSession } from './youtube-web.js';
 import { playerResponse } from './music.js';
+import { api, apiTracks } from './youtube-api.js';
 
 const title = (cn, en) => host.language() === 'zh-CN' ? cn : en;
 const pagesKey = 'youtube.feed.pages.v1';
@@ -51,13 +52,17 @@ async function tabs() {
   try { guide = await guideRequest; }
   catch (error) { active(generation); if (error.code === 'signIn') throw error; return []; }
   active(generation);
+  const categories = [
+    ['FEtopics', title('全部', 'All')], ['FEtopics_music', title('音乐', 'Music')],
+    ['FEtopics_podcasts', title('播客', 'Podcasts')], ['FEtopics_gaming', title('游戏', 'Gaming')],
+  ];
   const entries = find(guide.items, 'guideEntryRenderer').flatMap(item => {
     const endpoint = item.navigationEndpoint?.browseEndpoint;
-    if (!/^FEtopics(?:_[a-z]+)?$/.test(endpoint?.browseId || '')) return [];
-    const name = endpoint.browseId === 'FEtopics' ? title('全部', 'All') : text(item.formattedTitle);
-    return name ? [{ title: name, page: endpoint.browseId === 'FEtopics' ? 'feed:home' : nextPage({ browseId: endpoint.browseId }, name) }] : [];
+    const category = categories.find(([id]) => id === endpoint?.browseId);
+    if (!category) return [];
+    return [{ title: category[1], page: endpoint.browseId === 'FEtopics' ? 'feed:home' : nextPage({ browseId: endpoint.browseId }, category[1]) }];
   });
-  return entries.filter((item, index) => entries.findIndex(other => other.page === item.page) === index);
+  return categories.flatMap(([, name]) => entries.find(item => item.title === name) || []);
 }
 function sectionsOf(answer, fallbackTitle) {
   const list = sectionList(answer);
@@ -65,7 +70,7 @@ function sectionsOf(answer, fallbackTitle) {
   if (shelves.length) return shelves.flatMap(shelf => {
     const tracks = videos(listIn(shelf));
     if (!tracks.length) return [];
-    const name = sectionTitle(shelf) || fallbackTitle;
+    const name = shortsShelf(shelf) ? 'Shorts' : sectionTitle(shelf) || fallbackTitle;
     const token = tokenIn(listIn(shelf));
     return [{ title: name, tracks, trackLayout: 'videos', ...(token ? { morePage: nextPage({ continuation: token }, name) } : {}) }];
   });
@@ -84,10 +89,44 @@ function pageOf(answer, name) {
 export async function home() {
   const generation = revision;
   remember('feed:home', 0);
-  const answer = await loadHome(true);
-  const page = pageOf(answer, title('推荐视频', 'Recommended Videos'));
+  const groups = [
+    { title: title('推荐音乐视频', 'Recommended Music Videos'), matches: name => /^(推荐的?音乐视频|recommended music videos|music videos for you)$/i.test(name) },
+    { title: 'Shorts', matches: name => name === 'Shorts' },
+    { title: title('推荐视频', 'Recommended Videos'), matches: name => /^(推荐视频|为你推荐|recommended(?: videos)?|for you)$/i.test(name) },
+  ];
+  const found = new Map(), seen = new Set();
+  const collect = answer => {
+    for (const section of sectionsOf(answer, title('推荐视频', 'Recommended Videos'))) {
+      const group = groups.find(item => item.matches(section.title));
+      if (group && !found.has(group.title)) found.set(group.title, { ...section, title: group.title });
+    }
+  };
+  let answer = await loadHome(true); active(generation); collect(answer);
+  // 所需栏目可能在首页的后续响应；切回“全部”与首次进入必须走相同完整加载流程。
+  for (let i = 0; i < 2 && found.size < groups.length; i++) {
+    const token = tokenIn(sectionList(answer));
+    if (!token || seen.has(token)) break;
+    seen.add(token);
+    try { answer = await feedCall('browse', { continuation: token }); active(generation); collect(answer); }
+    catch (error) { active(generation); if (error.code === 'signIn') throw error; break; }
+  }
   const filters = await tabs(); active(generation);
-  return { ...page, title: 'YouTube', tabs: filters, selectedTab: 'feed:home' };
+  // 只读取服务端实际声明的音乐分类中的同名推荐栏目，不用搜索或榜单填充。
+  const music = filters.find(item => decode(item.page).request.browseId === 'FEtopics_music');
+  if (!found.has(groups[0].title) && music) {
+    try { const answer = await feedCall('browse', decode(music.page).request); active(generation); collect(answer); }
+    catch (error) { active(generation); if (error.code === 'signIn') throw error; }
+  }
+  if (!found.has('Shorts')) {
+    try {
+      const page = await shorts(0); active(generation);
+      const section = page.sections.find(item => item.tracks.length);
+      if (section) found.set('Shorts', { ...section, ...(page.more ? { morePage: 'shorts' } : {}) });
+    } catch (error) { active(generation); if (error.code === 'signIn') throw error; }
+  }
+  const sections = groups.map(group => found.get(group.title) || { title: group.title, tracks: [], trackLayout: 'videos',
+    empty: title('YouTube 暂未返回推荐内容，请登录或稍后下拉刷新', 'YouTube returned no recommendations. Sign in or pull to refresh later.') });
+  return { title: 'YouTube', sections, tabs: filters, selectedTab: 'feed:home', more: false };
 }
 function decode(page) {
   if (page === 'feed:home' || page === 'category:all') return { request: { browseId: 'FEwhat_to_watch' }, title: title('推荐视频', 'Recommended Videos') };
@@ -100,6 +139,7 @@ function decode(page) {
 }
 export async function browse({ page, offset = 0 }) {
   if (page === 'shorts') return shorts(offset);
+  if (page === 'feed:home' || page === 'category:all') return offset === 0 ? home() : { title: 'YouTube', sections: [], more: false };
   const generation = revision;
   if (offset === 0) remember(page, 0);
   const route = decode(page), previous = prior(page, offset);
@@ -120,6 +160,21 @@ function sequenceToken(answer) {
 async function sequenceTracks(answer) {
   const endpoints = (answer.entries || []).map(item => item.command?.reelWatchEndpoint)
     .filter(item => videoId(item?.videoId) && !item.adClientParams?.isAd && item.videoType !== 'REEL_VIDEO_TYPE_AD');
+  if (hasOAuth() && endpoints.length) {
+    // 序列通常只含 ID；账号元数据批量读取正式 API，不依赖可能要求再次登录的公开视频播放器。
+    const details = new Map();
+    for (let i = 0; i < endpoints.length; i += 50) {
+      const result = await api('videos', { part: 'snippet,contentDetails', id: endpoints.slice(i, i + 50).map(item => item.videoId).join(',') });
+      for (const track of apiTracks(result)) details.set(track.id, track);
+    }
+    return endpoints.flatMap(endpoint => {
+      const track = details.get(endpoint.videoId);
+      if (!track) return [];
+      const image = endpoint.thumbnail?.thumbnails?.at(-1);
+      return [{ ...track, album: { ...track.album, imageUrl: image?.url || track.album.imageUrl },
+        url: 'https://www.youtube.com/shorts/' + track.id, video: { width: image?.width || 9, height: image?.height || 16, short: true } }];
+    });
+  }
   const tracks = [];
   for (let i = 0; i < endpoints.length; i += 3) {
     const batch = await Promise.all(endpoints.slice(i, i + 3).map(async endpoint => {

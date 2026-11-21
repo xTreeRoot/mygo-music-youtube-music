@@ -1,7 +1,7 @@
 {
   "id": "youtube-music",
   "name": "YouTube",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "minAppVersion": "0.1.28",
   "main": "index.js",
   "playback": "stream",
@@ -23,28 +23,24 @@
       "builtin": "home"
     },
     {
-      "title": "Shorts",
-      "page": "shorts",
-      "icon": "play"
-    },
-    {
       "title": "订阅",
-      "page": "subscriptions"
+      "page": "subscriptions",
+      "placement": "personal"
     },
     {
       "title": "我的频道",
-      "page": "my-channel"
+      "page": "my-channel",
+      "placement": "personal"
     },
     {
-      "builtin": "liked"
-    },
-    {
-      "title": "我的视频",
-      "page": "uploads"
+      "title": "点赞",
+      "builtin": "liked",
+      "placement": "personal"
     },
     {
       "title": "音乐专区",
-      "page": "music"
+      "page": "music",
+      "placement": "personal"
     }
   ]
 }

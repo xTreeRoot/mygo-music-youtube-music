@@ -1,4 +1,5 @@
 // YouTube Music for MB, based on egoist/mygo-music-youtube-music.
+import { automaticVideo, playerCache } from "./media-policy.js";
 import { hasOAuth, oauthHeaders, signInOAuth, endOAuth, isOAuthSignInPending } from "./oauth.js";
 
 const site = "https://music.youtube.com";
@@ -1005,13 +1006,10 @@ function mediaURL(value) {
   return value;
 }
 
-const pendingPlayer = new Map();
+const cachedPlayer = playerCache();
 
-export async function playerResponse(id) {
-  const pending = pendingPlayer.get(id) || visitorData().then(visitor => call("player", { videoId: id, contentCheckOk: true, racyCheckOk: true }, visionOS(visitor)));
-  pendingPlayer.set(id, pending);
-  try { return await pending; }
-  finally { if (pendingPlayer.get(id) === pending) pendingPlayer.delete(id); }
+export async function playerResponse(id, consumer = "metadata") {
+  return cachedPlayer(id, () => visitorData().then(visitor => call("player", { videoId: id, contentCheckOk: true, racyCheckOk: true }, visionOS(visitor))), consumer);
 }
 
 function audioFormats(result) {
@@ -1027,7 +1025,7 @@ function videoFormats(result) {
 
 export async function stream({ id, quality = "high" }) {
   if (!validVideoID(id)) throw fail("unavailable", "无效的 YouTube 视频 ID");
-  const result = await playerResponse(id);
+  const result = await playerResponse(id, "audio");
   const status = result.playabilityStatus || {};
   if (status.status !== "OK") throw fail("unavailable", status.reason || "YouTube 当前未提供可播放音频");
   const formats = audioFormats(result);
@@ -1043,9 +1041,9 @@ export async function stream({ id, quality = "high" }) {
   };
 }
 
-export async function video({ id, quality = "auto" }) {
+export async function video({ id, quality = "auto", network = {} }) {
   if (!validVideoID(id)) throw fail("unavailable", "无效的 YouTube 视频 ID");
-  const result = await playerResponse(id);
+  const result = await playerResponse(id, "video");
   const status = result.playabilityStatus || {};
   if (status.status !== "OK") throw fail("unavailable", status.reason || t("No directly playable YouTube video"));
   const formats = videoFormats(result);
@@ -1056,7 +1054,8 @@ export async function video({ id, quality = "auto" }) {
   const ceiling = quality === "standard" ? 360 : requested ? Number(requested[1]) : Infinity;
   formats.sort((left, right) => resolution(right) - resolution(left) ||
     Number(right.fps || 0) - Number(left.fps || 0) || Number(right.bitrate || 0) - Number(left.bitrate || 0));
-  const selected = formats.find(format => resolution(format) <= ceiling) || formats.at(-1);
+  const selected = quality === "auto" || quality === "" ? automaticVideo(formats, network, resolution) :
+    formats.find(format => resolution(format) <= ceiling) || formats.at(-1);
   const seen = new Set();
   const videoQualities = formats.flatMap(format => {
     const height = resolution(format), id = `${height}p`;

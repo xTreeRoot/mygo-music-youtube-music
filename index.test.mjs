@@ -32,8 +32,8 @@ test('video and audio resolve concurrently without rewriting CDN signatures or u
   const [audio, video] = await Promise.all([plugin.stream(input), plugin.video(input)]);
   assert.equal(audio.type, 'm4a');
   assert.equal(video.type, 'mp4');
-  assert.equal(video.url, avc(1080).url);
-  assert.equal(video.videoQuality, '1080p');
+  assert.equal(video.url, high.url);
+  assert.equal(video.videoQuality, '720p');
   assert.deepEqual(video.videoQualities.map(item => item.id), ['1080p', '720p', '360p']);
   assert.equal(requests.filter(request => request.url.includes('/player?')).length, 1);
   assert.ok(requests.every(request => !request.headers.cookie && !request.headers.authorization));
@@ -47,7 +47,7 @@ test('video quality selection uses real formats, preserves portrait resolution a
   const { plugin } = await setup([portrait, lower, duplicate]);
   const input = { id: 'dQw4w9WgXcQ' };
   const automatic = await plugin.video(input);
-  assert.equal(automatic.url, portrait.url);
+  assert.equal(automatic.url, lower.url);
   assert.deepEqual(automatic.videoQualities, [{ id: '1080p', label: '1080p60' }, { id: '720p', label: '720p' }]);
   assert.equal((await plugin.video({ ...input, quality: '720p' })).url, lower.url);
   assert.equal((await plugin.video({ ...input, quality: '1440p' })).videoQuality, '1080p');

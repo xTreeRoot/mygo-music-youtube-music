@@ -1,10 +1,10 @@
 {
   "name": "mb-youtube-music",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check index.js && node --check music.js && node --check oauth.js && node --check youtube-web.js && node --check youtube-api.js && node --check youtube-feed.js",
+    "check": "node --check media-policy.js && node --check index.js && node --check music.js && node --check oauth.js && node --check youtube-web.js && node --check youtube-api.js && node --check youtube-feed.js",
     "test": "node --test *.test.mjs"
   }
 }

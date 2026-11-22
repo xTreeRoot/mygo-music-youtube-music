@@ -146,7 +146,8 @@ test('All to Music to All and refresh rebuild the complete homepage with indepen
     assert.equal(JSON.parse(decodeURIComponent(restored.sections[1].morePage.slice(8))).request.continuation, 'short-' + homes);
   }
   const shorts = await feed.browse({ page: restored.sections[1].morePage });
-  assert.equal(shorts.sections[0].tracks[0].id, third);
+  assert.equal(shorts.sections[0].tracks[0].id, other);
+  assert.equal((await feed.browse({ page: restored.sections[1].morePage, offset: 1 })).sections[0].tracks[0].id, third);
   const refreshed = await feed.home();
   assert.equal(homes, 4);
   assert.deepEqual(refreshed.sections.map(s => s.tracks.map(t => t.id)), [[third], [other], [id]]);
@@ -166,7 +167,8 @@ test('missing music recommendations use only the server-declared music category 
   const home = await feed.home();
   const more = await feed.browse({ page: home.sections[0].morePage });
   assert.deepEqual(home.sections.map(s => s.tracks[0]?.id), [third, other, id]);
-  assert.equal(more.sections[0].tracks[0].id, other);
+  assert.equal(more.sections[0].tracks[0].id, third);
+  assert.equal((await feed.browse({ page: home.sections[0].morePage, offset: 1 })).sections[0].tracks[0].id, other);
   assert.deepEqual(requests.map(body => body.browseId || body.continuation), ['FEwhat_to_watch', 'FEtopics_music', 'music-more']);
 });
 
@@ -191,4 +193,56 @@ test('Shorts sequence without inline metadata batches official account details a
   assert.equal(result.sections[0].tracks[0].duration, 27_000);
   assert.equal(result.sections[0].tracks[0].video.height, 1920);
   assert.equal(result.more, true); assert.equal(metadataRequests, 1);
+});
+
+test('shelf More starts at its real homepage snapshot then reads only its own whole-page continuation', async () => {
+  session(); const calls = [];
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/guide?')) return reply(guide);
+    const body = JSON.parse(options.body); calls.push(body);
+    if (!body.continuation) return reply(page([shelf('推荐的音乐视频', [tile(id)], 'music-cursor'), shelf('Shorts', [tile(third, true)], undefined, true), shelf('推荐视频', [tile(other)])]));
+    assert.equal(body.continuation, 'music-cursor');
+    return reply({ ...tracking, continuationContents: { sectionListContinuation: { contents: [
+      shelf('推荐视频', [tile(third)], 'unrelated-cursor'), shelf('推荐的音乐视频', [tile(id), tile(other)], 'own-cursor')
+    ] } } });
+  };
+  const home = await feed.home(), route = home.sections[0].morePage;
+  const first = await feed.browse({ page: route });
+  assert.deepEqual(first.sections[0].tracks.map(t => t.id), [id]);
+  assert.equal(first.sections[0].morePage, undefined); assert.equal(first.more, true);
+  assert.equal(calls.length, 1, 'opening More does not skip the first shelf page');
+  const next = await feed.browse({ page: route, offset: 1 });
+  assert.deepEqual(next.sections[0].tracks.map(t => t.id), [other]);
+  assert.equal(next.more, true);
+  const cursor = data.get('youtube.feed.pages.v1')[route + ':2'];
+  assert.equal(cursor.token, 'own-cursor'); assert.deepEqual(cursor.seen, [id, other]);
+});
+
+test('shelf continuation skips overlapping pages and never substitutes an unrelated shelf', async () => {
+  session(); let stage = 0;
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/guide?')) return reply(guide);
+    const body = JSON.parse(options.body);
+    if (!body.continuation) return reply(page([shelf('推荐音乐视频', [tile(id)], 'overlap'), shelf('Shorts', [tile(third, true)], undefined, true), shelf('推荐视频', [tile(other)])]));
+    stage++;
+    if (body.continuation === 'overlap') return reply({ ...tracking, continuationContents: { horizontalListContinuation: { items: [tile(id)], ...next('fresh') } } });
+    assert.equal(body.continuation, 'fresh');
+    return reply({ ...tracking, continuationContents: { sectionListContinuation: { contents: [shelf('其他推荐', [tile(third)]), shelf('推荐音乐视频', [tile(other)])] } } });
+  };
+  const home = await feed.home(), route = home.sections[0].morePage;
+  await feed.browse({ page: route });
+  const more = await feed.browse({ page: route, offset: 1 });
+  assert.deepEqual(more.sections[0].tracks.map(t => t.id), [other]);
+  assert.equal(stage, 2); assert.equal(more.more, false);
+});
+
+test('stored shelf snapshot and cursor survive module reload and reset drops account-scoped snapshots', async () => {
+  session();
+  globalThis.fetch = async url => reply(url.includes('/guide?') ? guide : page([shelf('推荐音乐视频', [tile(id)], 'next'), shelf('Shorts', [tile(other, true)], undefined, true), shelf('推荐视频', [tile(third)])]));
+  const home = await feed.home(), route = home.sections[0].morePage;
+  const restarted = await import('./youtube-feed.js?shelf-reload=1');
+  assert.equal((await restarted.browse({ page: route })).sections[0].tracks[0].id, id);
+  restarted.resetFeeds();
+  await assert.rejects(restarted.browse({ page: route }), /预览已失效/);
+  assert.deepEqual(data.get('youtube.feed.shelves.v1'), {});
 });

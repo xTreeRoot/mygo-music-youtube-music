@@ -6,6 +6,7 @@ import { api, apiTracks } from './youtube-api.js';
 
 const title = (cn, en) => host.language() === 'zh-CN' ? cn : en;
 const pagesKey = 'youtube.feed.pages.v1';
+const shelvesKey = 'youtube.feed.shelves.v1';
 let homeRequest, homeTime = 0, guideRequest, revision = 0;
 const tracksIn = page => page.sections.reduce((count, section) => count + (section.tracks?.length || 0), 0);
 const tokenIn = node => node?.continuations?.[0]?.nextContinuationData?.continuation || continuation(node);
@@ -14,11 +15,20 @@ const sectionList = answer => find(answer.contents, 'sectionListRenderer')[0] ||
 const listIn = shelf => shelf.content?.horizontalListRenderer || shelf.content?.expandedShelfContentsRenderer || shelf.content?.richShelfRenderer;
 const shortsShelf = shelf => shelf.tvhtml5ShelfRendererType === 'TVHTML5_SHELF_RENDERER_TYPE_SHORTS' || find(shelf, 'reelWatchEndpoint').length > 0;
 function active(generation) { if (generation !== revision) throw new Error('登录状态已改变，请重新刷新'); }
-const nextPage = (request, name) => 'yt-feed:' + encodeURIComponent(JSON.stringify({ request, title: name }));
+const nextPage = (request, name, shelf = false) => 'yt-feed:' + encodeURIComponent(JSON.stringify({ request, title: name, ...(shelf ? { shelf: true } : {}) }));
 
 export function resetFeeds() {
   revision++; homeRequest = undefined; guideRequest = undefined; homeTime = 0;
-  host.storage.set(pagesKey, {}); resetFeedSession();
+  host.storage.set(pagesKey, {}); host.storage.set(shelvesKey, {}); resetFeedSession();
+}
+/** 保存栏目的真实首屏和独立游标；“更多”从首屏开始，续页不再返回整个首页。 */
+function shelfPage(token, name, tracks) {
+  const route = nextPage({ continuation: token }, name, true);
+  const saved = host.storage.get(shelvesKey) || {};
+  saved[route] = { title: name, tracks, trackLayout: 'videos' };
+  for (const key of Object.keys(saved).slice(0, -32)) delete saved[key];
+  host.storage.set(shelvesKey, saved);
+  return route;
 }
 function remember(key, offset, next, seen = []) {
   const pages = host.storage.get(pagesKey) || {};
@@ -72,7 +82,7 @@ function sectionsOf(answer, fallbackTitle) {
     if (!tracks.length) return [];
     const name = shortsShelf(shelf) ? 'Shorts' : sectionTitle(shelf) || fallbackTitle;
     const token = tokenIn(listIn(shelf));
-    return [{ title: name, tracks, trackLayout: 'videos', ...(token ? { morePage: nextPage({ continuation: token }, name) } : {}) }];
+    return [{ title: name, tracks, trackLayout: 'videos', ...(token ? { morePage: shelfPage(token, name, tracks) } : {}) }];
   });
   const items = answer.continuationContents?.horizontalListContinuation || answer;
   const tracks = videos(items);
@@ -143,6 +153,7 @@ export async function browse({ page, offset = 0 }) {
   const generation = revision;
   if (offset === 0) remember(page, 0);
   const route = decode(page), previous = prior(page, offset);
+  if (route.shelf) return browseShelf(page, route, offset, previous, generation);
   if (offset > 0 && !previous) return { title: route.title, sections: [], more: false };
   const request = previous ? { continuation: previous.token } : route.request;
   const answer = await feedCall('browse', request);
@@ -153,6 +164,36 @@ export async function browse({ page, offset = 0 }) {
   const filters = route.request.browseId ? await tabs() : []; active(generation);
   return { ...result, tabs: filters, selectedTab: page,
     more: count > 0 && next !== request.continuation && remember(page, offset + count, next ? { token: next } : undefined) };
+}
+
+/** TV 的栏目续页既可能直接给横向列表，也可能仍给整页栏目；按原标题提取并跨页去重。 */
+async function browseShelf(page, route, offset, previous, generation) {
+  if (offset === 0) {
+    const first = host.storage.get(shelvesKey)?.[page];
+    if (!first) throw new Error(title('栏目预览已失效，请返回首页刷新', 'This shelf has expired. Refresh the homepage.'));
+    const count = first.tracks.length;
+    return { title: route.title, sections: [first], more: count > 0 && remember(page, count, { token: route.request.continuation, seen: first.tracks.map(track => track.id) }, first.tracks.map(track => track.id)) };
+  }
+  if (!previous) return { title: route.title, sections: [], more: false };
+  const seen = new Set(previous.seen || []), consumed = new Set();
+  const sameTitle = name => name.toLowerCase().replace(/的|\s/g, '') === route.title.toLowerCase().replace(/的|\s/g, '');
+  let token = previous.token, tracks = [], next;
+  for (let attempt = 0; attempt < 3 && token && !consumed.has(token); attempt++) {
+    consumed.add(token);
+    const answer = await feedCall('browse', { continuation: token }); active(generation);
+    const list = sectionList(answer);
+    const shelf = list ? find(list.contents, 'shelfRenderer').find(item => sameTitle(shortsShelf(item) ? 'Shorts' : sectionTitle(item))) : undefined;
+    const horizontal = shelf ? listIn(shelf) : answer.continuationContents?.horizontalListContinuation;
+    // 整页中找不到当前栏目时，不把其他推荐栏目冒充该栏目的后续数据。
+    tracks = videos(horizontal || (list ? null : answer)).filter(track => !seen.has(track.id) && seen.add(track.id));
+    next = tokenIn(horizontal) || list?.continuations?.[0]?.nextContinuationData?.continuation;
+    if (next === token || consumed.has(next)) next = undefined;
+    if (tracks.length || !next) break;
+    token = next;
+  }
+  if (!tracks.length && next) throw new Error(title('YouTube 暂未返回更多该栏目内容，请重试', 'YouTube returned no new items in this shelf. Try again.'));
+  return { title: route.title, sections: [{ title: route.title, tracks, trackLayout: 'videos' }],
+    more: tracks.length > 0 && remember(page, offset + tracks.length, next ? { token: next } : undefined, [...seen]) };
 }
 function sequenceToken(answer) {
   return typeof answer.continuation === 'string' ? answer.continuation : answer.continuationEndpoint?.continuationCommand?.token;

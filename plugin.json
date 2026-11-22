@@ -1,7 +1,7 @@
 {
   "id": "youtube-music",
   "name": "YouTube",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "minAppVersion": "0.1.28",
   "main": "index.js",
   "playback": "stream",
@@ -41,6 +41,23 @@
       "title": "音乐专区",
       "page": "music",
       "placement": "personal"
+    }
+  ],
+  "discovery": [
+    {
+      "id": "music-videos",
+      "title": "推荐音乐视频",
+      "page": "discovery:music"
+    },
+    {
+      "id": "shorts",
+      "title": "Shorts",
+      "page": "shorts"
+    },
+    {
+      "id": "recommended",
+      "title": "推荐视频",
+      "page": "discovery:recommended"
     }
   ]
 }

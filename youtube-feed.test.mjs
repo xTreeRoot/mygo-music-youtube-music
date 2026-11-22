@@ -364,3 +364,21 @@ test('refresh matches the original server shelf title when home displays a trans
   assert.deepEqual(refreshed.sections[0].tracks.map(t => t.id), [other]);
   assert.equal((await feed.browse({ page: route, offset: 1 })).sections[0].tracks[0].id, third);
 });
+
+test('independent recommended section never requests disabled music fallback or Shorts sequence', async () => {
+  session(); const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push(String(url));
+    if (new URL(url).pathname.endsWith('/guide')) return reply(guide);
+    assert.ok(new URL(url).pathname.endsWith('/browse'), 'disabled section started a request: ' + url);
+    const body = JSON.parse(options.body);
+    assert.equal(body.browseId, 'FEwhat_to_watch');
+    return reply(page([shelf('为你推荐', [tile(id)], 'next-recommended')]));
+  };
+  const result = await feed.home({ sectionIds: ['recommended'] });
+  assert.deepEqual(result.sections.map(item => item.tracks[0]?.id), [id]);
+  assert.equal(result.sections[0].morePage.startsWith('yt-feed:'), true);
+  const count = requests.length;
+  assert.deepEqual((await feed.home({ sectionIds: [] })).sections, []);
+  assert.equal(requests.length, count);
+});

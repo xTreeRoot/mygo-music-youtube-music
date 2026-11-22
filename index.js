@@ -19,6 +19,7 @@ const title = (cn, en) => host.language() === 'zh-CN' ? cn : en;
 const publicTracks = (name, tracks, extra = {}) => ({ title: name, tracks, trackLayout: 'videos', ...extra });
 export const home = feed.home;
 export async function browse({ page, offset = 0, refresh = false }) {
+  if (page === 'discovery:music' || page === 'discovery:recommended') return feed.home({ sectionIds: [page.slice(10)] });
   if (page === 'shorts' || page === 'feed:home' || page === 'category:all' || page.startsWith('yt-feed:')) return feed.browse({ page, offset, refresh });
   if (page === 'watch-later') { const result = await playlist({ id: 'mb:watch-later', offset }); return { title: title('稍后观看 · MB', 'Watch Later · MB'), sections: [publicTracks(title('稍后观看 · MB', 'Watch Later · MB'), result.tracks)], more: result.more }; }
   const key = `browse:${page}`; const saved = cursor(key, offset);

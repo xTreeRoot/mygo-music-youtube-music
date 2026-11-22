@@ -96,14 +96,15 @@ function pageOf(answer, name, sourcePage) {
   if (!sections.length) sections.push({ title: name, tracks: [], empty: title('YouTube 暂未返回推荐内容，请登录或稍后下拉刷新', 'YouTube returned no recommendations. Sign in or pull to refresh later.') });
   return { title: name, sections };
 }
-export async function home() {
+export async function home({ sectionIds } = {}) {
   const generation = revision;
   remember('feed:home', 0);
   const groups = [
-    { title: title('推荐音乐视频', 'Recommended Music Videos'), matches: name => /^(推荐的?音乐视频|recommended music videos|music videos for you)$/i.test(name) },
-    { title: 'Shorts', matches: name => name === 'Shorts' },
-    { title: title('推荐视频', 'Recommended Videos'), matches: name => /^(推荐视频|为你推荐|recommended(?: videos)?|for you)$/i.test(name) },
-  ];
+    { id: 'music', title: title('推荐音乐视频', 'Recommended Music Videos'), matches: name => /^(推荐的?音乐视频|recommended music videos|music videos for you)$/i.test(name) },
+    { id: 'shorts', title: 'Shorts', matches: name => name === 'Shorts' },
+    { id: 'recommended', title: title('推荐视频', 'Recommended Videos'), matches: name => /^(推荐视频|为你推荐|recommended(?: videos)?|for you)$/i.test(name) },
+  ].filter(group => !sectionIds || sectionIds.includes(group.id));
+  if (!groups.length) return { title: "YouTube", sections: [], more: false };
   const found = new Map(), seen = new Set();
   const collect = answer => {
     for (const section of sectionsOf(answer, title('推荐视频', 'Recommended Videos'), 'feed:home')) {
@@ -123,11 +124,11 @@ export async function home() {
   const filters = await tabs(); active(generation);
   // 只读取服务端实际声明的音乐分类中的同名推荐栏目，不用搜索或榜单填充。
   const music = filters.find(item => decode(item.page).request.browseId === 'FEtopics_music');
-  if (!found.has(groups[0].title) && music) {
+  if (groups.some(group => group.id === 'music') && !found.has(groups.find(group => group.id === 'music').title) && music) {
     try { const answer = await feedCall('browse', decode(music.page).request); active(generation); collect(answer); }
     catch (error) { active(generation); if (error.code === 'signIn') throw error; }
   }
-  if (!found.has('Shorts')) {
+  if (groups.some(group => group.id === 'shorts') && !found.has('Shorts')) {
     try {
       const page = await shorts(0); active(generation);
       const section = page.sections.find(item => item.tracks.length);

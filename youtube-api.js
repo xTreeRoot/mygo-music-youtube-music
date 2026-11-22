@@ -41,10 +41,12 @@ export async function officialComments(trackId, pageToken) {
 }
 export async function channelUploads(channelId, pageToken) {
   const channel = await api('channels', { part: 'contentDetails,snippet', ...(channelId ? { id: channelId } : { mine: true }) });
-  const uploads = channel.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-  if (!uploads) return { tracks: [], more: false };
+  const item = channel.items?.[0];
+  const artist = item ? { id: item.id || channelId, name: item.snippet?.title || '', imageUrl: thumbnail(item.snippet || {}), description: item.snippet?.description || '' } : undefined;
+  const uploads = item?.contentDetails?.relatedPlaylists?.uploads;
+  if (!uploads) return { artist, tracks: [], more: false };
   const answer = await api('playlistItems', { part: 'snippet,contentDetails', playlistId: uploads, maxResults: 50, pageToken });
-  return { tracks: apiTracks(answer), next: answer.nextPageToken, more: Boolean(answer.nextPageToken) };
+  return { artist, tracks: apiTracks(answer), next: answer.nextPageToken, more: Boolean(answer.nextPageToken) };
 }
 export async function subscribedVideos(pageToken) {
   const subscriptions = await api('subscriptions', { part: 'snippet', mine: true, maxResults: 20, order: 'unread', pageToken });

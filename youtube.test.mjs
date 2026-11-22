@@ -71,13 +71,13 @@ test('signed-in channel and playlist search use typed official requests and chan
   assert.equal(options.headers.authorization,'Bearer fixture-token');
   const query=new URL(url).searchParams;
   if(url.includes('/search?')){searches++;const channel=query.get('type')==='channel';return reply({items:[{id:channel?{channelId:'UCfixture'}:{playlistId:'PLfixture'},snippet:{title:channel?'Creator':'List'}}]});}
-  if(url.includes('/channels?'))return reply({items:[{contentDetails:{relatedPlaylists:{uploads:'UUfixture'}}}]});
+  if(url.includes('/channels?'))return reply({items:[{id:'UCfixture',snippet:{title:'Fixture Creator',description:'Channel introduction',thumbnails:{default:{url:'https://example.test/avatar.jpg'}}},contentDetails:{relatedPlaylists:{uploads:'UUfixture'}}}]});
   assert.ok(url.includes('/playlistItems?'));
   const second=query.has('pageToken');return reply({items:[{id:'entry',snippet:{title:'Video',resourceId:{videoId:id}}}],...(second?{}:{nextPageToken:'page2'})});
  };
  assert.equal((await plugin.search({query:'creator',kind:'artists'})).artists[0].id,'UCfixture');
  assert.equal((await plugin.search({query:'list',kind:'playlists'})).playlists[0].id,'PLfixture');
  assert.equal(searches,2);
- assert.equal((await plugin.artist({id:'UCfixture'})).more,true);
+ const author=await plugin.artist({id:'UCfixture'}); assert.equal(author.more,true); assert.equal(author.artist.name,'Fixture Creator'); assert.equal(author.artist.description,'Channel introduction');
  assert.equal((await plugin.artist({id:'UCfixture',offset:1})).more,false);guest();
 });

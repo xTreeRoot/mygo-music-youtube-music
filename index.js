@@ -110,9 +110,11 @@ export async function artist({ id, offset = 0 }) {
   if (id.startsWith('UC')) {
     const key = `artist:${id}`, token = cursor(key, offset);
     if (offset > 0 && !token) return { tracks: [], more: false };
-    if (hasOAuth()) { const result = await channelUploads(id, token); return { tracks: result.tracks, more: keep(key, offset + result.tracks.length, result.next) }; }
+    if (hasOAuth()) { const result = await channelUploads(id, token); return { artist: result.artist, tracks: result.tracks, more: keep(key, offset + result.tracks.length, result.next) }; }
     const answer = await webCall('browse', token ? { continuation: token } : { browseId: id });
-    const tracks = videos(answer); return { tracks, more: keep(key, offset + tracks.length, continuation(answer)) };
+    const metadata = find(answer, 'channelMetadataRenderer')[0];
+    const artist = metadata ? { id, name: metadata.title || '', imageUrl: metadata.avatar?.thumbnails?.at(-1)?.url, description: metadata.description || '' } : undefined;
+    const tracks = videos(answer); return { artist, tracks, more: keep(key, offset + tracks.length, continuation(answer)) };
   }
   return music.artist({ id, offset });
 }

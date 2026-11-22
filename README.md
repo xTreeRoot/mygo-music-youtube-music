@@ -1,6 +1,6 @@
 # YouTube · MB 跨平台插件
 
-Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)。版本 **0.2.5**，需要宿主合同 0.1.28。插件 ID 保持 `youtube-music`，更新保留已有账号和设置。
+Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)。版本 **0.2.6**，需要宿主合同 0.1.28。插件 ID 保持 `youtube-music`，更新保留已有账号和设置。
 
 默认首页及搜索来自普通 YouTube；YouTube Music 保留为“音乐专区”，旧音乐视频、Charts、New Releases 路由继续兼容。公开网页请求不发送原生 OAuth Bearer，避免网页客户端拒绝原生令牌导致 400。网页配置读取当前真实客户端配置，不拼接日期猜版本。
 
@@ -39,3 +39,9 @@ npm test
 发布 ZIP 须包含 `plugin.json`、`index.js`、`music.js`、`oauth.js`、`youtube-web.js`、`youtube-api.js`、`youtube-feed.js` 和 `locales/`。不附带私有数据。
 
 播放器互动总数：提供 `interactionSummary({trackId})` 返回平台公开的点赞和评论总数，隐藏计数保持未知。YouTube 使用已登录的官方 Data API；哔哩哔哩使用公开视频详情统计。
+
+## 0.2.6 刷新修复
+
+显式下拉刷新支持宿主传入 `refresh: true`：Shorts 绕过短期首页缓存，栏目“更多”重新加载其真实首页或分类父页，替换首屏快照及续页游标。普通打开“更多”仍从首页看到的首屏开始。刷新失败保留旧首屏和游标；成功空响应结束旧分页。刷新后允许从首页栏目转到官方 Shorts 序列继续翻页，兼容服务端原标题与首页翻译标题。
+
+50 项行为回归通过，覆盖缓存穿透、刷新后续页、分类父页、成功空响应、失败保留游标和官方序列切换。2026-11-22 复用现有账号只读实测：Shorts 栏目刷新后内容变化，后续 7 条与新首屏不重复；直接 Shorts 从 12 条更新为 16 条；音乐推荐从 5 条更新为 6 条，续页 6 条与新首屏不重复。推荐数量和顺序由服务端决定。

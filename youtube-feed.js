@@ -22,10 +22,10 @@ export function resetFeeds() {
   host.storage.set(pagesKey, {}); host.storage.set(shelvesKey, {}); resetFeedSession();
 }
 /** 保存栏目的真实首屏和独立游标；“更多”从首屏开始，续页不再返回整个首页。 */
-function shelfPage(token, name, tracks) {
+function shelfPage(token, name, tracks, sourcePage) {
   const route = nextPage({ continuation: token }, name, true);
   const saved = host.storage.get(shelvesKey) || {};
-  saved[route] = { title: name, tracks, trackLayout: 'videos' };
+  saved[route] = { title: name, tracks, trackLayout: 'videos', sourcePage, continuation: token };
   for (const key of Object.keys(saved).slice(0, -32)) delete saved[key];
   host.storage.set(shelvesKey, saved);
   return route;
@@ -74,15 +74,15 @@ async function tabs() {
   });
   return categories.flatMap(([, name]) => entries.find(item => item.title === name) || []);
 }
-function sectionsOf(answer, fallbackTitle) {
+function sectionsOf(answer, fallbackTitle, sourcePage) {
   const list = sectionList(answer);
   const shelves = list ? find(list.contents, 'shelfRenderer') : [];
   if (shelves.length) return shelves.flatMap(shelf => {
-    const tracks = videos(listIn(shelf));
-    if (!tracks.length) return [];
-    const name = shortsShelf(shelf) ? 'Shorts' : sectionTitle(shelf) || fallbackTitle;
+    const tracks = videos(listIn(shelf)), declared = sectionTitle(shelf);
+    if (!tracks.length && !declared && !shortsShelf(shelf)) return [];
+    const name = shortsShelf(shelf) ? 'Shorts' : declared || fallbackTitle;
     const token = tokenIn(listIn(shelf));
-    return [{ title: name, tracks, trackLayout: 'videos', ...(token ? { morePage: shelfPage(token, name, tracks) } : {}) }];
+    return [{ title: name, tracks, trackLayout: 'videos', ...(token ? { morePage: shelfPage(token, name, tracks, sourcePage) } : {}) }];
   });
   const items = answer.continuationContents?.horizontalListContinuation || answer;
   const tracks = videos(items);
@@ -91,8 +91,8 @@ function sectionsOf(answer, fallbackTitle) {
   return [normal.length ? { title: fallbackTitle, tracks: normal, trackLayout: 'videos' } : null,
     short.length ? { title: 'Shorts', tracks: short, trackLayout: 'videos' } : null].filter(Boolean);
 }
-function pageOf(answer, name) {
-  const sections = sectionsOf(answer, name);
+function pageOf(answer, name, sourcePage) {
+  const sections = sectionsOf(answer, name, sourcePage);
   if (!sections.length) sections.push({ title: name, tracks: [], empty: title('YouTube 暂未返回推荐内容，请登录或稍后下拉刷新', 'YouTube returned no recommendations. Sign in or pull to refresh later.') });
   return { title: name, sections };
 }
@@ -106,7 +106,7 @@ export async function home() {
   ];
   const found = new Map(), seen = new Set();
   const collect = answer => {
-    for (const section of sectionsOf(answer, title('推荐视频', 'Recommended Videos'))) {
+    for (const section of sectionsOf(answer, title('推荐视频', 'Recommended Videos'), 'feed:home')) {
       const group = groups.find(item => item.matches(section.title));
       if (group && !found.has(group.title)) found.set(group.title, { ...section, title: group.title });
     }
@@ -147,34 +147,55 @@ function decode(page) {
       !(typeof request.continuation === 'string' && request.continuation.length <= 32768 || /^FEtopics(?:_[a-z]+)?$/.test(request.browseId || ''))) throw new Error('无效的 YouTube 推荐分类');
   return value;
 }
-export async function browse({ page, offset = 0 }) {
-  if (page === 'shorts') return shorts(offset);
+export async function browse({ page, offset = 0, refresh = false }) {
+  if (page === 'shorts') return shorts(offset, refresh);
   if (page === 'feed:home' || page === 'category:all') return offset === 0 ? home() : { title: 'YouTube', sections: [], more: false };
   const generation = revision;
-  if (offset === 0) remember(page, 0);
   const route = decode(page), previous = prior(page, offset);
-  if (route.shelf) return browseShelf(page, route, offset, previous, generation);
+  if (route.shelf) return browseShelf(page, route, offset, previous, generation, refresh);
   if (offset > 0 && !previous) return { title: route.title, sections: [], more: false };
   const request = previous ? { continuation: previous.token } : route.request;
   const answer = await feedCall('browse', request);
-  const result = pageOf(answer, route.title);
+  const result = pageOf(answer, route.title, page);
   const list = sectionList(answer) || answer.continuationContents?.horizontalListContinuation;
   const next = tokenIn(list);
   const count = tracksIn(result);
   const filters = route.request.browseId ? await tabs() : []; active(generation);
+  if (offset === 0) remember(page, 0);
   return { ...result, tabs: filters, selectedTab: page,
     more: count > 0 && next !== request.continuation && remember(page, offset + count, next ? { token: next } : undefined) };
 }
 
 /** TV 的栏目续页既可能直接给横向列表，也可能仍给整页栏目；按原标题提取并跨页去重。 */
-async function browseShelf(page, route, offset, previous, generation) {
+async function browseShelf(page, route, offset, previous, generation, refresh) {
   if (offset === 0) {
-    const first = host.storage.get(shelvesKey)?.[page];
+    let first = host.storage.get(shelvesKey)?.[page];
     if (!first) throw new Error(title('栏目预览已失效，请返回首页刷新', 'This shelf has expired. Refresh the homepage.'));
-    const count = first.tracks.length;
-    return { title: route.title, sections: [first], more: count > 0 && remember(page, count, { token: route.request.continuation, seen: first.tracks.map(track => track.id) }, first.tracks.map(track => track.id)) };
+    if (refresh) {
+      const sourcePage = first.sourcePage || 'feed:home';
+      const parent = await browse({ page: sourcePage, refresh: true }); active(generation);
+      const normalized = name => name.toLowerCase().replace(/的|\s/g, '');
+      const current = parent.sections.find(section => [section.title,
+        section.morePage?.startsWith('yt-feed:') ? decode(section.morePage).title : '']
+        .some(name => normalized(name) === normalized(route.title)));
+      if (!current) throw new Error(title('YouTube 本次未返回该栏目，请稍后刷新', 'YouTube did not return this shelf. Try refreshing later.'));
+      first = { title: current.title, tracks: current.tracks, trackLayout: 'videos', sourcePage,
+        continuation: current.morePage === 'shorts' ? null : current.morePage ? decode(current.morePage).request.continuation || null : null,
+        delegate: current.morePage === 'shorts' ? 'shorts' : null };
+      const saved = host.storage.get(shelvesKey) || {}; saved[page] = first; host.storage.set(shelvesKey, saved);
+    }
+    const count = first.tracks.length, token = 'continuation' in first ? first.continuation : route.request.continuation;
+    const next = first.delegate ? { delegate: first.delegate } : token ? { token } : undefined;
+    remember(page, 0);
+    return { title: route.title, sections: [{ title: first.title, tracks: first.tracks, trackLayout: 'videos' }],
+      more: count > 0 && remember(page, count, next, first.tracks.map(track => track.id)) };
   }
   if (!previous) return { title: route.title, sections: [], more: false };
+  if (previous.delegate === 'shorts') {
+    const result = await shorts(offset); active(generation);
+    if (result.more) remember(page, offset + tracksIn(result), { delegate: 'shorts' });
+    return result;
+  }
   const seen = new Set(previous.seen || []), consumed = new Set();
   const sameTitle = name => name.toLowerCase().replace(/的|\s/g, '') === route.title.toLowerCase().replace(/的|\s/g, '');
   let token = previous.token, tracks = [], next;
@@ -233,14 +254,13 @@ async function sequenceTracks(answer) {
   if (endpoints.length && !tracks.length) throw new Error('Shorts 视频信息暂时不可用，请重试');
   return tracks;
 }
-async function shorts(offset) {
+async function shorts(offset, refresh = false) {
   const generation = revision, key = 'shorts';
-  if (offset === 0) remember(key, 0);
   const previous = prior(key, offset);
   if (offset > 0 && !previous) return { title: 'Shorts', sections: [], more: false };
   let tracks, next;
   if (!previous) {
-    const answer = await loadHome();
+    const answer = await loadHome(refresh);
     const shelf = find(sectionList(answer)?.contents || answer.contents, 'shelfRenderer').find(shortsShelf);
     tracks = shelf ? videos(listIn(shelf), true) : videos(answer, true);
     const token = tokenIn(listIn(shelf || {}));
@@ -265,6 +285,7 @@ async function shorts(offset) {
     if (token && token !== previous.token) next = { kind: 'sequence', token };
   }
   active(generation);
+  if (offset === 0) remember(key, 0);
   const seen = new Set(previous?.seen || []);
   tracks = tracks.filter(track => !seen.has(track.id) && seen.add(track.id));
   return { title: 'Shorts', sections: [{ title: 'Shorts', tracks, trackLayout: 'videos', empty: title('暂无 Shorts', 'No Shorts') }],

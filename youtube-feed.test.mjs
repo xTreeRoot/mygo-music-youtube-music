@@ -246,3 +246,121 @@ test('stored shelf snapshot and cursor survive module reload and reset drops acc
   await assert.rejects(restarted.browse({ page: route }), /预览已失效/);
   assert.deepEqual(data.get('youtube.feed.shelves.v1'), {});
 });
+
+test('explicit Shorts refresh bypasses the recent home response and replaces its continuation', async () => {
+  session(); let homes = 0; const requested = [];
+  globalThis.fetch = async (url, options) => {
+    const body = JSON.parse(options.body); requested.push(body);
+    if (body.continuation) return reply({ ...tracking, continuationContents: { horizontalListContinuation: { items: [tile(third, true)] } } });
+    homes++;
+    return reply(page([shelf('Shorts', [tile(homes === 1 ? id : other, true)], 'short-' + homes, true)]));
+  };
+  assert.equal((await feed.browse({ page: 'shorts' })).sections[0].tracks[0].id, id);
+  assert.equal((await feed.browse({ page: 'shorts', refresh: true })).sections[0].tracks[0].id, other);
+  await feed.browse({ page: 'shorts', offset: 1 });
+  assert.equal(requested.at(-1).continuation, 'short-2');
+});
+
+test('refreshing a saved shelf reloads its parent and replaces the first page and old cursor', async () => {
+  session(); let homes = 0; const requested = [];
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/guide?')) return reply(guide);
+    const body = JSON.parse(options.body); requested.push(body);
+    if (body.continuation) return reply({ ...tracking, continuationContents: { horizontalListContinuation: { items: [tile(third, true)] } } });
+    homes++;
+    return reply(page([shelf('推荐音乐视频', [tile(id)], 'music-' + homes), shelf('Shorts', [tile(homes === 1 ? id : other, true)], 'short-' + homes, true), shelf('推荐视频', [tile(third)])]));
+  };
+  const home = await feed.home(), route = home.sections[1].morePage;
+  await feed.browse({ page: route });
+  const next = await feed.browse({ page: route, refresh: true });
+  assert.equal(next.sections[0].tracks[0].id, other); assert.equal(homes, 2);
+  await feed.browse({ page: route, offset: 1 });
+  assert.equal(requested.at(-1).continuation, 'short-2');
+  assert.deepEqual(data.get('youtube.feed.pages.v1')[route + ':1'].seen, [other]);
+});
+
+test('shelf refresh uses its category parent and a successful empty response ends old pagination', async () => {
+  session(); let visits = 0; const requested = [];
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/guide?')) return reply(guide);
+    const body = JSON.parse(options.body); requested.push(body);
+    assert.equal(body.browseId, 'FEtopics_gaming'); visits++;
+    return reply(page([shelf('Game shelf', visits === 1 ? [tile(id)] : [], visits === 1 ? 'old-game' : undefined)]));
+  };
+  const parent = 'yt-feed:' + encodeURIComponent(JSON.stringify({ request: { browseId: 'FEtopics_gaming' }, title: 'Games' }));
+  const first = await feed.browse({ page: parent }), route = first.sections[0].morePage;
+  await feed.browse({ page: route });
+  const next = await feed.browse({ page: route, refresh: true });
+  assert.deepEqual(next.sections[0].tracks, []); assert.equal(next.more, false);
+  assert.equal((await feed.browse({ page: route, offset: 1 })).more, false);
+  assert.equal(requested.length, 2);
+});
+
+test('failed explicit refresh retains the previous shelf cursor and allows its next page', async () => {
+  session(); let visits = 0;
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/guide?')) return reply(guide);
+    const body = JSON.parse(options.body);
+    if (body.continuation) { assert.equal(body.continuation, 'old-short'); return reply({ ...tracking, continuationContents: { horizontalListContinuation: { items: [tile(other, true)] } } }); }
+    if (++visits > 1) return reply({}, 503);
+    return reply(page([shelf('推荐音乐视频', [tile(id)]), shelf('Shorts', [tile(id, true)], 'old-short', true), shelf('推荐视频', [tile(id)])]));
+  };
+  const home = await feed.home(), route = home.sections[1].morePage;
+  await feed.browse({ page: route });
+  await assert.rejects(feed.browse({ page: route, refresh: true }), /HTTP 503/);
+  assert.equal((await feed.browse({ page: route, offset: 1 })).sections[0].tracks[0].id, other);
+});
+
+test('a refreshed Shorts shelf can continue the official sequence when the home shelf disappears', async () => {
+  session(); let homes = 0; const sequences = [];
+  globalThis.fetch = async (url, options = {}) => {
+    if (url.includes('/guide?')) return reply(guide);
+    if (url.endsWith('/shorts/')) return reply('var ytInitialData = {"sequenceContinuation":"sequence-first"};');
+    if (url.includes('youtube.googleapis.com/youtube/v3/videos?')) {
+      const ids = new URL(url).searchParams.get('id').split(',');
+      return reply({ items: ids.map(id => ({ id, snippet: { title: 'Short ' + id, channelId: 'UCfixture', channelTitle: 'Creator' }, contentDetails: { duration: 'PT27S' } })) });
+    }
+    const body = JSON.parse(options.body);
+    if (body.browseId) {
+      homes++;
+      return reply(page([shelf('推荐音乐视频', [tile(id)]),
+        ...(homes === 1 ? [shelf('Shorts', [tile(id, true)], 'old-short', true)] : []),
+        shelf('推荐视频', [tile(third)])]));
+    }
+    sequences.push(body.sequenceParams);
+    return reply({ ...tracking, entries: (sequences.length === 1 ? [other] : [other, third])
+      .map(videoId => ({ command: { reelWatchEndpoint: { videoId } } })),
+      ...(sequences.length === 1 ? { continuation: 'sequence-next' } : {}) });
+  };
+  const home = await feed.home(), route = home.sections[1].morePage;
+  await feed.browse({ page: route });
+  const refreshed = await feed.browse({ page: route, refresh: true });
+  assert.deepEqual(refreshed.sections[0].tracks.map(t => t.id), [other]);
+  assert.equal(refreshed.more, true);
+  const next = await feed.browse({ page: route, offset: 1 });
+  assert.deepEqual(next.sections[0].tracks.map(t => t.id), [third]);
+  assert.equal(next.more, false);
+  assert.deepEqual(sequences, ['sequence-first', 'sequence-next']);
+  assert.equal(homes, 2);
+});
+
+test('refresh matches the original server shelf title when home displays a translated group title', async () => {
+  session(); let homes = 0;
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/guide?')) return reply(guide);
+    const body = JSON.parse(options.body);
+    if (body.continuation) {
+      assert.equal(body.continuation, 'music-2');
+      return reply({ ...tracking, continuationContents: { horizontalListContinuation: { items: [tile(third)] } } });
+    }
+    homes++;
+    return reply(page([shelf('Music Videos For You', [tile(homes === 1 ? id : other)], 'music-' + homes),
+      shelf('Shorts', [tile(third, true)], undefined, true), shelf('推荐视频', [tile(third)])]));
+  };
+  const home = await feed.home(), route = home.sections[0].morePage;
+  assert.equal(home.sections[0].title, '推荐音乐视频');
+  await feed.browse({ page: route });
+  const refreshed = await feed.browse({ page: route, refresh: true });
+  assert.deepEqual(refreshed.sections[0].tracks.map(t => t.id), [other]);
+  assert.equal((await feed.browse({ page: route, offset: 1 })).sections[0].tracks[0].id, third);
+});

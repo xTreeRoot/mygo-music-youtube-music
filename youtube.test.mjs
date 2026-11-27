@@ -50,7 +50,7 @@ test('caption timing uses unsigned native-player track and keeps multiline text'
 });
 test('playlist reads and inserts are exposed while disabled comments return an empty page',async()=>{
  session();
- assert.equal(typeof plugin.playlists,'function');assert.equal(typeof plugin.addToPlaylist,'function');assert.equal(plugin.removeFromPlaylist,undefined);assert.equal(plugin.recent,undefined);assert.equal(plugin.played,undefined);
+ assert.equal(typeof plugin.playlists,'function');assert.equal(typeof plugin.addToPlaylist,'function');assert.equal(typeof plugin.removeFromPlaylist,'function');assert.equal(plugin.recent,undefined);assert.equal(plugin.played,undefined);
  globalThis.fetch=async()=>reply({error:{errors:[{reason:'commentsDisabled'}]}},403);
  assert.deepEqual(await plugin.comments({trackId:'00000000001'}),{comments:[],more:false});guest();
 });
@@ -94,4 +94,15 @@ test('playlist insert checks ownership and sends the official snippet without lo
  assert.deepEqual(writes,[{snippet:{playlistId:'PLfixture',resourceId:{kind:'youtube#video',videoId:id}}}]);
  await assert.rejects(plugin.addToPlaylist({id:'foreign',trackIds:[id]}),/本人/);assert.equal(writes.length,1);
  await assert.rejects(plugin.addToPlaylist({id:'PLfixture',trackIds:['bad']}),/无效/);guest();
+});
+
+test('playlist removal resolves entry IDs over all pages before issuing deletes',async()=>{
+ session();const deleted=[];
+ globalThis.fetch=async(address,options)=>{
+  const u=new URL(address),q=u.searchParams;
+  if(u.pathname.endsWith('/playlists'))return reply({items:[{id:'PLfixture',snippet:{title:'Mine'}}]});
+  if(options.method==='DELETE'){deleted.push(q.get('id'));return {ok:true,status:204};}
+  return reply(q.has('pageToken')?{items:[{id:'entry2',contentDetails:{videoId:id}}]}:{items:[{id:'other',contentDetails:{videoId:'00000000001'}}],nextPageToken:'next'});
+ };
+ await plugin.removeFromPlaylist({id:'PLfixture',trackIds:[id]});assert.deepEqual(deleted,['entry2']);guest();
 });

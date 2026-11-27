@@ -112,6 +112,32 @@ export async function addToPlaylist({ id, trackIds }) {
   cursors.clear();
 }
 
+/** 官方 playlistItems.delete 使用条目 ID，不能把视频 ID 当作删除 ID。 */
+export async function removeFromPlaylist({ id, trackIds }) {
+  if (!Array.isArray(trackIds) || !trackIds.length || trackIds.length > 50 || trackIds.some(value => !videoId(value))) throw new Error('无效的 YouTube 视频 ID');
+  if (!(await playlists()).some(item => item.id === id && item.mine && !item.fixed)) throw new Error('只能编辑本人普通 YouTube 歌单');
+  const wanted = new Set(trackIds), entries = [], tokens = new Set();
+  let pageToken;
+  for (let page = 0; page < 1000; page++) {
+    const answer = await api('playlistItems', { part: 'snippet,contentDetails', playlistId: id, maxResults: 50, pageToken });
+    if (!Array.isArray(answer.items)) throw new Error('YouTube 未返回完整歌单');
+    for (const entry of answer.items) {
+      const video = entry.contentDetails?.videoId || entry.snippet?.resourceId?.videoId;
+      if (wanted.has(video)) {
+        if (typeof entry.id !== 'string' || !entry.id) throw new Error('YouTube 未返回歌单条目 ID');
+        entries.push(entry.id);
+      }
+    }
+    if (!answer.nextPageToken) {
+      for (const entry of entries) await api('playlistItems', { id: entry }, 'DELETE');
+      cursors.clear(); return;
+    }
+    if (tokens.has(answer.nextPageToken)) throw new Error('YouTube 歌单分页未前进');
+    pageToken = answer.nextPageToken; tokens.add(pageToken);
+  }
+  throw new Error('YouTube 歌单超过可加载范围');
+}
+
 export async function playlist({ id, offset = 0 }) {
   const key = `playlist:${id}`, token = cursor(key, offset);
   if (offset > 0 && !token) return { tracks: [], more: false };

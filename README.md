@@ -1,4 +1,4 @@
-# YouTube · MB 跨平台插件
+# YouTube · 山海跨平台插件
 
 Fork 自 [egoist/mygo-music-youtube-music](https://github.com/egoist/mygo-music-youtube-music)。版本 **0.2.6**，需要宿主合同 0.1.28。插件 ID 保持 `youtube-music`，更新保留已有账号和设置。
 
@@ -56,4 +56,4 @@ npm test
 
 ### 0.2.10
 
-三端可读取本人 YouTube 普通歌单，并通过播放器及歌曲列表的“添加到平台歌单”写入。使用 YouTube Data API `playlistItems.insert` 官方合同；需要已授权的 YouTube OAuth 会话。MB 稍后观看占位条目不作为可写目标。服务端拒绝时反馈原操作错误，不回退为本地收藏。
+三端可读取本人 YouTube 普通歌单，并通过播放器及歌曲列表的“添加到平台歌单”写入。使用 YouTube Data API `playlistItems.insert` 官方合同；需要已授权的 YouTube OAuth 会话。山海稍后观看占位条目不作为可写目标。服务端拒绝时反馈原操作错误，不回退为本地收藏。

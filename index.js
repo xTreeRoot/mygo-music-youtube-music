@@ -92,12 +92,26 @@ export async function liked({ offset = 0 }) {
   const answer = await api('videos', { part: 'snippet,contentDetails', myRating: 'like', maxResults: 50, pageToken: token });
   const tracks = apiTracks(answer); return { tracks, more: keep(key, offset + tracks.length, answer.nextPageToken) };
 }
-async function playlists() {
+export async function playlists() {
   if (!hasOAuth()) return [];
   const items = []; let pageToken;
   do { const answer = await api('playlists', { part: 'snippet,contentDetails', mine: true, maxResults: 50, pageToken }); items.push(...(answer.items || [])); pageToken = answer.nextPageToken; } while (pageToken && items.length < 1000);
   return [{ id: 'mb:watch-later', name: title('稍后观看 · MB', 'Watch Later · MB'), mine: true, fixed: true }, ...items.map(item => ({ id: item.id, name: item.snippet.title, imageUrl: thumbnail(item.snippet), mine: true }))];
 }
+/** 按 YouTube Data API playlistItems.insert 合同加入本人普通歌单。 */
+export async function addToPlaylist({ id, trackIds }) {
+  const ids = [...new Set(trackIds || [])];
+  if (!ids.length || ids.length > 50 || ids.some(value => !videoId(value))) throw new Error('无效的 YouTube 视频 ID');
+  const owned = await playlists();
+  if (!owned.some(item => item.id === id && item.mine && !item.fixed)) throw new Error('只能添加到本人可编辑的 YouTube 歌单');
+  for (const video of ids) {
+    await api('playlistItems', { part: 'snippet' }, 'POST', {
+      snippet: { playlistId: id, resourceId: { kind: 'youtube#video', videoId: video } },
+    });
+  }
+  cursors.clear();
+}
+
 export async function playlist({ id, offset = 0 }) {
   const key = `playlist:${id}`, token = cursor(key, offset);
   if (offset > 0 && !token) return { tracks: [], more: false };

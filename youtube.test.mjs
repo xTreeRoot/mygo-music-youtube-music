@@ -48,9 +48,9 @@ test('caption timing uses unsigned native-player track and keeps multiline text'
  };
  assert.deepEqual((await plugin.lyrics({id})).lines,[{start:100,end:600,text:'Hello world'},{start:700,end:4700,text:'Next'}]);
 });
-test('removed playlist mutation is not exposed and disabled comments return an empty page',async()=>{
+test('playlist reads and inserts are exposed while disabled comments return an empty page',async()=>{
  session();
- assert.equal(plugin.playlists,undefined);assert.equal(plugin.removeFromPlaylist,undefined);assert.equal(plugin.recent,undefined);assert.equal(plugin.played,undefined);
+ assert.equal(typeof plugin.playlists,'function');assert.equal(typeof plugin.addToPlaylist,'function');assert.equal(plugin.removeFromPlaylist,undefined);assert.equal(plugin.recent,undefined);assert.equal(plugin.played,undefined);
  globalThis.fetch=async()=>reply({error:{errors:[{reason:'commentsDisabled'}]}},403);
  assert.deepEqual(await plugin.comments({trackId:'00000000001'}),{comments:[],more:false});guest();
 });
@@ -80,4 +80,18 @@ test('signed-in channel and playlist search use typed official requests and chan
  assert.equal(searches,2);
  const author=await plugin.artist({id:'UCfixture'}); assert.equal(author.more,true); assert.equal(author.artist.name,'Fixture Creator'); assert.equal(author.artist.description,'Channel introduction');
  assert.equal((await plugin.artist({id:'UCfixture',offset:1})).more,false);guest();
+});
+
+test('playlist insert checks ownership and sends the official snippet without local fallback',async()=>{
+ session();const writes=[];
+ globalThis.fetch=async(address,options)=>{
+  const url=new URL(address);
+  if(url.pathname.endsWith('/playlists'))return reply({items:[{id:'PLfixture',snippet:{title:'Mine'}}]});
+  assert.ok(url.pathname.endsWith('/playlistItems'));assert.equal(options.method,'POST');
+  writes.push(JSON.parse(options.body));return reply({id:'added'});
+ };
+ await plugin.addToPlaylist({id:'PLfixture',trackIds:[id,id]});
+ assert.deepEqual(writes,[{snippet:{playlistId:'PLfixture',resourceId:{kind:'youtube#video',videoId:id}}}]);
+ await assert.rejects(plugin.addToPlaylist({id:'foreign',trackIds:[id]}),/本人/);assert.equal(writes.length,1);
+ await assert.rejects(plugin.addToPlaylist({id:'PLfixture',trackIds:['bad']}),/无效/);guest();
 });
